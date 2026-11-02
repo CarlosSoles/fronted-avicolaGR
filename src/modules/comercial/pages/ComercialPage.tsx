@@ -49,6 +49,8 @@ import {
   Download,
   FileSpreadsheet,
   FileText,
+  MapPin,
+  ExternalLink,
 } from 'lucide-react';
 
 export const formatDateDisplay = (dateStr?: string | null): string => {
@@ -121,8 +123,21 @@ export const ComercialPage: React.FC = () => {
   const [suggestedBarnCode, setSuggestedBarnCode] = useState<string>('G-01');
   const [externalReference, setExternalReference] = useState<string>('');
   const [orderNotes, setOrderNotes] = useState<string>('');
+  const [deliveryAddress, setDeliveryAddress] = useState<string>('');
+  const [deliveryLat, setDeliveryLat] = useState<string>('');
+  const [deliveryLng, setDeliveryLng] = useState<string>('');
+  const [rawCoordsInput, setRawCoordsInput] = useState<string>('');
   const [formError, setFormError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+
+  const handleParseDeliveryCoords = (input: string) => {
+    setRawCoordsInput(input);
+    const match = input.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+    if (match) {
+      setDeliveryLat(match[1]);
+      setDeliveryLng(match[2]);
+    }
+  };
 
   // Modales de Acción del Gestor Comercial (Dar OK / Observar / Cancelar / Detalle)
   const [selectedOrderForAction, setSelectedOrderForAction] = useState<SalesOrder | null>(null);
@@ -337,6 +352,9 @@ export const ComercialPage: React.FC = () => {
       setZoneCode(c.zone_code);
       if (c.preferred_min_weight) setMinWeightStr(String(c.preferred_min_weight));
       if (c.preferred_max_weight) setMaxWeightStr(String(c.preferred_max_weight));
+      if (c.address && !deliveryAddress) {
+        setDeliveryAddress(c.address);
+      }
     }
   };
 
@@ -432,6 +450,9 @@ export const ComercialPage: React.FC = () => {
       }
       if (createdClient.preferred_max_weight) {
         setMaxWeightStr(String(createdClient.preferred_max_weight));
+      }
+      if (createdClient.address && !deliveryAddress) {
+        setDeliveryAddress(createdClient.address);
       }
 
       setNewClientModalOpen(false);
@@ -927,6 +948,9 @@ export const ComercialPage: React.FC = () => {
       suggested_barn_code: suggestedBarnCode,
       external_reference: externalReference.trim() || undefined,
       notes: finalNotes || undefined,
+      delivery_address: deliveryAddress.trim() || undefined,
+      delivery_latitude: deliveryLat ? parseFloat(deliveryLat) : null,
+      delivery_longitude: deliveryLng ? parseFloat(deliveryLng) : null,
       is_draft: isDraft,
     };
 
@@ -966,7 +990,9 @@ export const ComercialPage: React.FC = () => {
           status: isDraft ? 'BORRADOR' : 'REGISTRADO',
           external_reference: payload.external_reference,
           notes: payload.notes,
-          delivery_address: matchedClient?.address || undefined,
+          delivery_address: payload.delivery_address || matchedClient?.address || undefined,
+          delivery_latitude: payload.delivery_latitude,
+          delivery_longitude: payload.delivery_longitude,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -980,6 +1006,10 @@ export const ComercialPage: React.FC = () => {
       // Limpiar formulario y cambiar a pestaña Programación
       setExternalReference('');
       setOrderNotes('');
+      setDeliveryAddress('');
+      setDeliveryLat('');
+      setDeliveryLng('');
+      setRawCoordsInput('');
       setSexPreference('INDISTINTO');
       setActiveTab('programacion');
     } catch (err: any) {
@@ -1756,6 +1786,97 @@ export const ComercialPage: React.FC = () => {
                   <option value="SUR">Zona Sur</option>
                 </select>
               </div>
+            </div>
+
+            {/* 2.1 Punto de Entrega y Coordenadas Satelitales */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/60 rounded-2xl border border-slate-200 dark:border-slate-700/80 space-y-3.5">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-black text-slate-900 dark:text-slate-100 uppercase tracking-wider flex items-center gap-1.5">
+                  <MapPin className="w-4 h-4 text-red-600" />
+                  <span>Punto de Entrega & Coordenadas Satelitales (Descarga) *</span>
+                </label>
+                <span className="text-[10px] font-bold text-slate-400">
+                  Destino físico del camión
+                </span>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                  Dirección / Punto de Descarga del Cliente *
+                </label>
+                <Input
+                  type="text"
+                  placeholder="Ej: Mercado Mayorista Santa Anita, Rampa 2 - Puesto 45 (o Av. Ejemplo 123)"
+                  value={deliveryAddress}
+                  onChange={(e) => setDeliveryAddress(e.target.value)}
+                  className="text-xs font-medium"
+                  required
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                <div className="sm:col-span-1">
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Pegar desde Google Maps:
+                  </label>
+                  <Input
+                    type="text"
+                    placeholder="Ej: -12.046374, -77.042793"
+                    value={rawCoordsInput}
+                    onChange={(e) => handleParseDeliveryCoords(e.target.value)}
+                    className="text-xs font-mono font-medium"
+                  />
+                  <span className="text-[9.5px] text-slate-400 block mt-0.5">
+                    Clic derecho en Google Maps &rarr; copiar
+                  </span>
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Latitud (WGS84):
+                  </label>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="Ej: -12.046374"
+                    value={deliveryLat}
+                    onChange={(e) => setDeliveryLat(e.target.value)}
+                    className="text-xs font-mono font-bold"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 mb-1">
+                    Longitud (WGS84):
+                  </label>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="Ej: -77.042793"
+                    value={deliveryLng}
+                    onChange={(e) => setDeliveryLng(e.target.value)}
+                    className="text-xs font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              {deliveryLat && deliveryLng && (
+                <div className="flex items-center justify-between text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-200 dark:border-emerald-800">
+                  <span className="flex items-center gap-1.5">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    <span>Coordenadas fijadas: {deliveryLat}, {deliveryLng}</span>
+                  </span>
+                  <a
+                    href={`https://www.google.com/maps?q=${deliveryLat},${deliveryLng}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-[11px] text-emerald-800 dark:text-emerald-300 underline font-black inline-flex items-center gap-1"
+                  >
+                    <span>Verificar en Google Maps</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
             </div>
 
             {/* 3. Cantidad y Fecha */}
@@ -2727,7 +2848,7 @@ export const ComercialPage: React.FC = () => {
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
-                    Dirección o Punto de Entrega
+                    Dirección
                   </label>
                   <Input
                     type="text"
@@ -2736,6 +2857,9 @@ export const ComercialPage: React.FC = () => {
                     onChange={(e) => setNewClientAddress(e.target.value)}
                     className="text-xs"
                   />
+                  <p className="text-[10px] text-slate-400 mt-1">
+                    Dirección fiscal o legal de la empresa. El punto de descarga se especificará al capturar cada pedido.
+                  </p>
                 </div>
 
                 <div>

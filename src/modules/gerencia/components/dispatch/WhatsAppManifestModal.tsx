@@ -49,7 +49,11 @@ export const generateWhatsAppManifestText = (order: SalesOrder): string => {
 • Cliente: ${order.client_name}
 • RUC: ${order.client_tax_id || 'Sin RUC'}
 • Zona: Zona ${order.zone_code} ${order.external_reference ? `| OC: ${order.external_reference}` : ''}
-• Dirección de Entrega: ${deliveryAddress}
+• Dirección de Entrega: ${deliveryAddress}${
+  order.delivery_latitude && order.delivery_longitude
+    ? `\n• 📍 Ubicación GPS: https://maps.google.com/?q=${order.delivery_latitude},${order.delivery_longitude}`
+    : ''
+}
 
 📦 *CARGA ASIGNADA:*
 • Aves Vivas: ${birds.toLocaleString()} aves

@@ -28,6 +28,8 @@ import {
   Eye,
   EyeOff,
   Truck,
+  MapPin,
+  ExternalLink,
 } from 'lucide-react';
 import { AdminGpsSimulationPanel } from '../components/AdminGpsSimulationPanel';
 
@@ -36,6 +38,8 @@ interface FarmItem {
   name: string;
   barns_count: number;
   status: string;
+  latitude?: number | null;
+  longitude?: number | null;
 }
 
 const ROLE_DEFINITIONS: Record<
@@ -209,6 +213,61 @@ export const AdminPage: React.FC = () => {
   const [loadingFarms, setLoadingFarms] = useState(false);
   const [farmSearch, setFarmSearch] = useState('');
 
+  // Modal de Coordenadas de Granja
+  const [editingFarmCoords, setEditingFarmCoords] = useState<FarmItem | null>(null);
+  const [farmCoordInput, setFarmCoordInput] = useState<string>('');
+  const [farmLat, setFarmLat] = useState<string>('');
+  const [farmLng, setFarmLng] = useState<string>('');
+  const [isSavingFarmCoords, setIsSavingFarmCoords] = useState<boolean>(false);
+
+  const handleOpenFarmCoordsModal = (farm: FarmItem) => {
+    setEditingFarmCoords(farm);
+    const latStr = farm.latitude !== null && farm.latitude !== undefined ? String(farm.latitude) : '';
+    const lngStr = farm.longitude !== null && farm.longitude !== undefined ? String(farm.longitude) : '';
+    setFarmLat(latStr);
+    setFarmLng(lngStr);
+    setFarmCoordInput(latStr && lngStr ? `${latStr}, ${lngStr}` : '');
+  };
+
+  const handleParseFarmCoords = (input: string) => {
+    setFarmCoordInput(input);
+    const match = input.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+    if (match) {
+      setFarmLat(match[1]);
+      setFarmLng(match[2]);
+    }
+  };
+
+  const handleSaveFarmCoords = async () => {
+    if (!editingFarmCoords) return;
+    setIsSavingFarmCoords(true);
+    try {
+      const lat = farmLat ? parseFloat(farmLat) : null;
+      const lng = farmLng ? parseFloat(farmLng) : null;
+
+      try {
+        await apiClient(`/admin/farms/${editingFarmCoords.code}/coordinates`, {
+          method: 'PUT',
+          body: JSON.stringify({ latitude: lat, longitude: lng }),
+        });
+      } catch {
+        // En caso de modo offline
+      }
+
+      const updated = farms.map((f) =>
+        f.code === editingFarmCoords.code ? { ...f, latitude: lat, longitude: lng } : f
+      );
+      setFarms(updated);
+      localStorage.setItem('avicola_admin_farms_coords', JSON.stringify(updated));
+      showNotification(`✔ Coordenadas satelitales de "${editingFarmCoords.name}" guardadas exitosamente.`);
+      setEditingFarmCoords(null);
+    } catch (err: any) {
+      showNotification(`Error al guardar coordenadas: ${err?.message || 'Error desconocido'}`);
+    } finally {
+      setIsSavingFarmCoords(false);
+    }
+  };
+
   // Notificación de éxito
   const [successBanner, setSuccessBanner] = useState<string | null>(null);
 
@@ -269,8 +328,33 @@ export const AdminPage: React.FC = () => {
     setLoadingFarms(true);
     try {
       const data = await apiClient<FarmItem[]>('/admin/farms');
+      const localCoords = localStorage.getItem('avicola_admin_farms_coords');
+      if (localCoords) {
+        try {
+          const parsed = JSON.parse(localCoords) as FarmItem[];
+          const merged = data.map((d) => {
+            const loc = parsed.find((p) => p.code === d.code);
+            return {
+              ...d,
+              latitude: d.latitude ?? loc?.latitude ?? null,
+              longitude: d.longitude ?? loc?.longitude ?? null,
+            };
+          });
+          setFarms(merged);
+          setLoadingFarms(false);
+          return;
+        } catch {}
+      }
       setFarms(data);
     } catch {
+      const localCoords = localStorage.getItem('avicola_admin_farms_coords');
+      if (localCoords) {
+        try {
+          setFarms(JSON.parse(localCoords));
+          setLoadingFarms(false);
+          return;
+        } catch {}
+      }
       setFarms(OFFICIAL_FARMS_FALLBACK);
     } finally {
       setLoadingFarms(false);
@@ -914,25 +998,49 @@ export const AdminPage: React.FC = () => {
             {filteredFarms.map((f) => (
               <div
                 key={f.code}
-                className="bg-white dark:bg-slate-900 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-2xs hover:border-red-300 dark:hover:border-red-900 transition-colors flex items-center justify-between"
+                className="bg-white dark:bg-slate-900 p-3.5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-2xs hover:border-red-300 dark:hover:border-red-900 transition-colors flex flex-col justify-between gap-2.5"
               >
                 <div>
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono font-black text-xs px-2 py-0.5 rounded bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300 border border-red-200 dark:border-red-900">
-                      {f.code}
-                    </span>
-                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                      {f.name}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="font-mono font-black text-xs px-2 py-0.5 rounded-lg bg-red-50 text-red-700 dark:bg-red-950/60 dark:text-red-300 border border-red-200 dark:border-red-900">
+                        {f.code}
+                      </span>
+                      <span className="text-xs font-black text-slate-900 dark:text-slate-100">
+                        {f.name}
+                      </span>
+                    </div>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
+                      {f.status}
                     </span>
                   </div>
-                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 flex items-center gap-1.5">
-                    <Building2 className="w-3 h-3 text-slate-400" />
+                  <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-1.5 flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
                     <span>{f.barns_count} Galpones asignados</span>
                   </div>
                 </div>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800">
-                  {f.status}
-                </span>
+
+                {/* Coordenadas GPS */}
+                <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between text-[11px]">
+                  {f.latitude && f.longitude ? (
+                    <span className="font-mono text-emerald-700 dark:text-emerald-400 font-bold flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-emerald-600 shrink-0" />
+                      <span>{f.latitude.toFixed(4)}, {f.longitude.toFixed(4)}</span>
+                    </span>
+                  ) : (
+                    <span className="text-amber-600 dark:text-amber-400 font-semibold flex items-center gap-1">
+                      <MapPin className="w-3 h-3 text-amber-500 shrink-0" />
+                      <span>Sin GPS</span>
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleOpenFarmCoordsModal(f)}
+                    className="text-red-600 hover:text-red-700 font-black text-[11px] hover:underline cursor-pointer"
+                  >
+                    {f.latitude && f.longitude ? 'Editar GPS' : '+ Asignar GPS'}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -1299,6 +1407,105 @@ export const AdminPage: React.FC = () => {
                 className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4"
               >
                 Sí, Eliminar Usuario
+              </Button>
+            </div>
+          </div>
+        </Modal>
+      )}
+
+      {/* MODAL: CONFIGURAR COORDENADAS GPS DE GRANJA */}
+      {editingFarmCoords && (
+        <Modal
+          isOpen={!!editingFarmCoords}
+          onClose={() => setEditingFarmCoords(null)}
+          title={`Coordenadas GPS de Granja: ${editingFarmCoords.name} (${editingFarmCoords.code})`}
+          maxWidth="md"
+        >
+          <div className="space-y-4 text-xs">
+            <div className="p-3 bg-red-50 dark:bg-red-950/40 rounded-xl border border-red-200 dark:border-red-900/60 text-red-800 dark:text-red-300 space-y-1">
+              <p className="font-bold flex items-center gap-1.5">
+                <MapPin className="w-4 h-4 text-red-600 shrink-0" />
+                <span>Punto de Partida Satelital (Google Maps)</span>
+              </p>
+              <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                Abre Google Maps, busca la granja, haz <strong>clic derecho</strong> sobre la puerta o galpones y haz clic en las coordenadas para copiarlas.
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                Pegar Coordenadas de Google Maps:
+              </label>
+              <Input
+                type="text"
+                placeholder="Ej: -11.824512, -77.089431"
+                value={farmCoordInput}
+                onChange={(e) => handleParseFarmCoords(e.target.value)}
+                className="font-mono text-xs"
+              />
+              <span className="text-[10px] text-slate-400 mt-0.5 block">
+                Al pegar, el sistema detecta y separa automáticamente la latitud y longitud.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Latitud (WGS84):
+                </label>
+                <Input
+                  type="number"
+                  step="any"
+                  placeholder="Ej: -11.824512"
+                  value={farmLat}
+                  onChange={(e) => setFarmLat(e.target.value)}
+                  className="font-mono text-xs font-bold"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Longitud (WGS84):
+                </label>
+                <Input
+                  type="number"
+                  step="any"
+                  placeholder="Ej: -77.089431"
+                  value={farmLng}
+                  onChange={(e) => setFarmLng(e.target.value)}
+                  className="font-mono text-xs font-bold"
+                />
+              </div>
+            </div>
+
+            {farmLat && farmLng && (
+              <a
+                href={`https://www.google.com/maps?q=${farmLat},${farmLng}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 text-xs text-blue-600 dark:text-blue-400 font-bold hover:underline"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                <span>Verificar ubicación en Google Maps</span>
+              </a>
+            )}
+
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setEditingFarmCoords(null)}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveFarmCoords}
+                isLoading={isSavingFarmCoords}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold"
+              >
+                Guardar Coordenadas
               </Button>
             </div>
           </div>

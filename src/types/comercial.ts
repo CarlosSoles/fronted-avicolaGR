@@ -129,6 +129,8 @@ export interface SalesOrder {
   split_children_ids?: string[];
   // Dirección y contacto
   delivery_address?: string;
+  delivery_latitude?: number | null;
+  delivery_longitude?: number | null;
   farm_contact_phone?: string;
 }
 
@@ -187,6 +189,9 @@ export interface OrderCreatePayload {
   suggested_barn_code?: string;
   external_reference?: string;
   notes?: string;
+  delivery_address?: string;
+  delivery_latitude?: number | null;
+  delivery_longitude?: number | null;
   is_draft?: boolean;
 }
 
