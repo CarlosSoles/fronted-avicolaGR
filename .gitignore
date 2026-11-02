@@ -13,10 +13,11 @@ dist-ssr/
 build/
 *.local
 
-# Variables de entorno y secretos
-.env.local
-.env.*.local
-*.env.local
+# Variables de entorno y secretos (NUNCA SUBIR A GIT)
+.env
+.env.*
+!.env.example
+*.env
 
 # Logs
 npm-debug.log*
