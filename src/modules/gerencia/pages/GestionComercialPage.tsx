@@ -124,7 +124,7 @@ export const resolveClientDetails = (order?: SalesOrder | null) => {
   if (!order) return { address: '-', phone: '-', contact: '-' };
   const meta = order.client_id ? KNOWN_CLIENTS_METADATA[order.client_id] : null;
   return {
-    address: order.delivery_address || meta?.address || `Zona Comercial ${order.zone_code} - Lima Metropolitana`,
+    address: order.delivery_address || meta?.address || `Punto de entrega en Zona ${order.zone_code}`,
     phone: meta?.phone || '+51 987 654 321',
     contact: meta?.contact || 'Área de Compras y Recepción',
   };

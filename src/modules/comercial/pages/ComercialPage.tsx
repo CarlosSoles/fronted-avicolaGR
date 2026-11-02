@@ -940,6 +940,9 @@ export const ComercialPage: React.FC = () => {
       } catch {
         // Fallback local
         const nextNum = orders.length + 1;
+        const matchedClient = clients.find(
+          (c) => c.id === payload.client_id || (payload.client_tax_id && c.tax_id === payload.client_tax_id)
+        );
         createdOrder = {
           id: `ord-loc-${Date.now()}`,
           order_number: `PED-2026-${String(nextNum).padStart(3, '0')}`,
@@ -963,6 +966,7 @@ export const ComercialPage: React.FC = () => {
           status: isDraft ? 'BORRADOR' : 'REGISTRADO',
           external_reference: payload.external_reference,
           notes: payload.notes,
+          delivery_address: matchedClient?.address || undefined,
           created_at: new Date().toISOString(),
           updated_at: new Date().toISOString(),
         };
@@ -1711,7 +1715,12 @@ export const ComercialPage: React.FC = () => {
                 <div className="mt-1.5 flex items-center gap-2 text-[11px] text-emerald-700 dark:text-emerald-400 font-semibold">
                   <CheckCircle className="w-3.5 h-3.5 shrink-0" />
                   <span>
-                    Cliente verificado en catálogo &bull; RUC: {clientTaxId || 'S/N'} &bull; Zona habitual: {zoneCode}
+                    Cliente en catálogo &bull; RUC: {clientTaxId || 'S/N'} &bull; Zona: {zoneCode}
+                    {clients.find((c) => c.id === selectedClientId)?.address && (
+                      <span className="font-bold text-slate-900 dark:text-slate-100">
+                        {' '}&bull; Entrega: {clients.find((c) => c.id === selectedClientId)?.address}
+                      </span>
+                    )}
                   </span>
                 </div>
               )}
