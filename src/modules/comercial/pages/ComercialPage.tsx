@@ -1636,19 +1636,14 @@ export const ComercialPage: React.FC = () => {
       {/* ========================================================================= */}
       {activeTab === 'nuevo_pedido' && (
         <div className="max-w-3xl mx-auto bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 p-6 sm:p-8 shadow-xs space-y-6">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100 dark:border-slate-800">
-            <div>
-              <h2 className="text-lg font-black text-slate-950 dark:text-white flex items-center gap-2">
-                <PlusCircle className="w-5 h-5 text-red-600" />
-                <span>Captura de Pedido de Venta</span>
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                Complete los datos acordados con el cliente. Al registrar, ingresará a la Programación para revisión y aprobación del Gestor Comercial.
-              </p>
-            </div>
-            <span className="px-2.5 py-1 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-400">
-              Vendedor: {user?.username || 'Comercial'}
-            </span>
+          <div className="pb-3 border-b border-slate-100 dark:border-slate-800">
+            <h2 className="text-lg font-black text-slate-950 dark:text-white flex items-center gap-2">
+              <PlusCircle className="w-5 h-5 text-red-600" />
+              <span>Captura de Pedido de Venta</span>
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+              Complete los datos acordados con el cliente. Al registrar, ingresará a la Programación para revisión y aprobación del Gestor Comercial.
+            </p>
           </div>
 
           {formError && (
