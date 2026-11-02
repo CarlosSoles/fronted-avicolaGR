@@ -59,7 +59,12 @@ export const RoxiCopilotCard: React.FC<RoxiCopilotCardProps> = ({
         setMood('respuesta');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'No se pudo conectar con ROXI. Intente nuevamente.');
+      const rawMsg = String(err?.message || '');
+      const userFriendlyMsg =
+        rawMsg.toLowerCase().includes('fetch') || rawMsg.toLowerCase().includes('network')
+          ? 'El servidor se encuentra iniciando su conexión. Por favor reintente en unos segundos.'
+          : rawMsg || 'No se pudo completar la consulta con ROXI. Intente nuevamente.';
+      setErrorMessage(userFriendlyMsg);
       setMood('rechazo');
     } finally {
       setLoading(false);
