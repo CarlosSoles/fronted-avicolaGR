@@ -1520,9 +1520,6 @@ export const GestionComercialPage: React.FC = () => {
         >
           <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
           <span>Copiloto ROXI (IA)</span>
-          <span className="px-1.5 py-0.5 text-[9px] rounded-full bg-indigo-100 dark:bg-indigo-950/80 text-indigo-700 dark:text-indigo-300 font-black uppercase">
-            Gemini
-          </span>
         </button>
       </div>
 
@@ -1534,15 +1531,10 @@ export const GestionComercialPage: React.FC = () => {
           {/* Banner Prominente de Acceso a ROXI Copilot */}
           <div className="p-4 bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 rounded-2xl text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4 border border-indigo-800/60">
             <div className="flex items-center gap-3.5">
-              <div className="w-12 h-12 rounded-2xl bg-white/10 backdrop-blur-md p-1 border border-white/20 flex items-center justify-center shrink-0">
-                <RoxiAvatar mood="saludando" size="md" />
-              </div>
+              <RoxiAvatar mood="saludando" size="md" className="shrink-0" />
               <div>
                 <div className="flex items-center gap-2">
                   <h3 className="font-black text-sm text-white tracking-wide">ROXI • Copiloto de Inteligencia Comercial</h3>
-                  <span className="px-2 py-0.5 text-[9.5px] font-extrabold uppercase rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                    Gemini 2.0 Flash
-                  </span>
                 </div>
                 <p className="text-xs text-indigo-200 mt-0.5">
                   Optimiza la asignación de galpones, fletes viales reales (km) y rotación sanitaria (lotes &gt; 45 días) para los pedidos registrados.

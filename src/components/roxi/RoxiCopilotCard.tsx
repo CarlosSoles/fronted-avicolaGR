@@ -99,7 +99,7 @@ export const RoxiCopilotCard: React.FC<RoxiCopilotCardProps> = ({
                 ROXI
               </span>
               <span className="text-[10px] font-extrabold uppercase px-1.5 py-0.2 rounded bg-blue-100 text-blue-700 dark:bg-blue-950 dark:text-blue-300 border border-blue-200 dark:border-blue-800">
-                Copiloto IA • Gemini 2.0 Flash
+                Copiloto IA
               </span>
               {applied && (
                 <span className="text-[10px] font-black uppercase px-2 py-0.2 rounded-full bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 border border-emerald-300 flex items-center gap-1">

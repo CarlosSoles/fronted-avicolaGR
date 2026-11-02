@@ -101,25 +101,19 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
 
         <div className="flex flex-col md:flex-row items-center justify-between gap-6 relative z-10">
           <div className="flex items-center gap-5">
-            <div className="w-24 h-24 rounded-2xl bg-white/10 backdrop-blur-md p-1.5 border border-white/20 shadow-lg flex items-center justify-center shrink-0">
-              <RoxiAvatar mood="saludando" size="lg" />
-            </div>
+            <RoxiAvatar mood="saludando" size="lg" className="shrink-0" />
 
             <div className="space-y-1.5">
               <div className="flex items-center gap-2.5 flex-wrap">
                 <h2 className="text-xl font-black tracking-tight text-white flex items-center gap-2">
                   <span>ROXI • Centro de Control IA</span>
                 </h2>
-                <span className="px-2.5 py-0.5 text-[10px] font-extrabold uppercase rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-                  Gemini 2.0 Flash Conectado
-                </span>
                 <span className="px-2.5 py-0.5 text-[10px] font-extrabold uppercase rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30">
                   Inventario en Vivo • 23 Granjas
                 </span>
               </div>
               <p className="text-xs text-indigo-200 max-w-2xl leading-relaxed">
-                Asistente especializado en optimización zootécnica y logística comercial. ROXI evalúa distancias viales reales en km hacia los 4 ejes de Lima (S/. 4.50/km), prioriza lotes biológicos mayores a 45 días y calibra pesos con tolerancia estricta.
+                Asistente especializado en optimización zootécnica y logística comercial. ROXI evalúa rutas viales y costos de transporte, prioriza lotes biológicos según edad y calibra pesos comerciales con tolerancia estricta.
               </p>
             </div>
           </div>
@@ -371,16 +365,16 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
 
               <div>
                 <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Zona Comercial de Lima:
+                  Zona Comercial de Entrega:
                 </label>
                 <select
                   value={simZone}
                   onChange={(e) => setSimZone(e.target.value)}
                   className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
                 >
-                  <option value="NORTE">Lima Norte (Puente Piedra/Comas)</option>
-                  <option value="CENTRO">Lima Centro (Santa Anita/La Parada)</option>
-                  <option value="SUR">Lima Sur (Villa El Salvador/Lurín)</option>
+                  <option value="NORTE">Zona Norte</option>
+                  <option value="CENTRO">Zona Centro</option>
+                  <option value="SUR">Zona Sur</option>
                   <option value="METROPOLITANA">Metropolitana / Callao</option>
                 </select>
               </div>
