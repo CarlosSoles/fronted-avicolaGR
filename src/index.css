@@ -1,0 +1,87 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-950 dark:bg-slate-950 dark:text-slate-100 transition-colors duration-200;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Encabezados oscuros y nítidos en modo claro */
+  h1, h2, h3, h4, h5, h6 {
+    @apply text-slate-950 dark:text-slate-50 font-bold;
+  }
+
+  label {
+    @apply text-slate-900 dark:text-slate-200 font-bold;
+  }
+}
+
+/* ==========================================================================
+   ALTO CONTRASTE Y LEGIBILIDAD PARA MODO CLARO (Elimina textos grises/deslavados)
+   ========================================================================== */
+html:not(.dark) {
+  color: #020617;
+}
+
+/* En modo claro, convertir textos tenues en carbón oscuro y negro de alto contraste */
+html:not(.dark) .text-slate-900 {
+  color: #020617 !important;
+}
+
+html:not(.dark) .text-slate-800 {
+  color: #090d16 !important;
+}
+
+html:not(.dark) .text-slate-700 {
+  color: #1e293b !important;
+}
+
+/* Textos secundarios y subtítulos: en vez de gris tenue, ahora son carbón nítido */
+html:not(.dark) .text-slate-600 {
+  color: #1e293b !important;
+}
+
+html:not(.dark) .text-slate-500 {
+  color: #334155 !important;
+}
+
+html:not(.dark) .text-slate-400 {
+  color: #475569 !important;
+}
+
+/* Placeholders limpios y legibles */
+html:not(.dark) input::placeholder,
+html:not(.dark) textarea::placeholder {
+  color: #64748b !important;
+}
+
+/* Custom scrollbars for dense data tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: #f1f5f9;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #0f172a;
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 3px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #475569;
+}
+
