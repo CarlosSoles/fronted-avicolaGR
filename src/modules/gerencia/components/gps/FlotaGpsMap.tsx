@@ -93,23 +93,38 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
   const mapInstanceRef = useRef<L.Map | null>(null);
 
   // Referencias a elementos en mapa
-  const truckMarkersRef = useRef<Record<string, L.Marker>>({});
-  const completedPolylinesRef = useRef<Record<string, L.Polyline>>({});
+  const truckLayersRef = useRef<
+    Record<
+      string,
+      {
+        originMarker: L.Marker;
+        destMarker: L.Marker;
+        basePoly: L.Polyline;
+        completedPoly: L.Polyline;
+        truckMarker: L.Marker;
+      }
+    >
+  >({});
+  const hasFittedBoundsRef = useRef<boolean>(false);
 
   // Suscripción al store telemático compartido
   const [trucks, setTrucks] = useState<SimulatedTruck[]>(gpsSimulationStore.getTrucks());
   const [selectedTruckId, setSelectedTruckId] = useState<string>(
-    initialSelectedTruckId || trucks[0]?.id || 'VH-001'
+    initialSelectedTruckId || trucks[0]?.id || ''
   );
 
   useEffect(() => {
     const unsubscribe = gpsSimulationStore.subscribe(() => {
-      setTrucks([...gpsSimulationStore.getTrucks()]);
+      const current = gpsSimulationStore.getTrucks();
+      setTrucks([...current]);
+      if (current.length > 0 && !current.some((t) => t.id === selectedTruckId)) {
+        setSelectedTruckId(current[0].id);
+      }
     });
     return unsubscribe;
-  }, []);
+  }, [selectedTruckId]);
 
-  const selectedTruck = trucks.find((t) => t.id === selectedTruckId) || trucks[0];
+  const selectedTruck = trucks.find((t) => t.id === selectedTruckId) || trucks[0] || null;
 
   // 1. Inicialización de Leaflet con OpenStreetMap oficial y gratuito
   useEffect(() => {
@@ -131,107 +146,132 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
 
     mapInstanceRef.current = map;
 
-    // Añadir origen y destino fijos de cada camión
-    trucks.forEach((truck) => {
-      const originCoord = truck.waypoints[0];
-      const destCoord = truck.waypoints[truck.waypoints.length - 1];
-
-      // Marcador de Granja (Origen)
-      L.marker([originCoord.lat, originCoord.lng], {
-        icon: createFarmIcon(`${truck.originFarm} (${truck.originBarn})`),
-      })
-        .addTo(map)
-        .bindPopup(`
-          <div style="font-family:sans-serif; font-size:12px; padding:2px;">
-            <b style="color:#dc2626;">GRANJA DE ORIGEN</b><br/>
-            <strong>${truck.originFarm}</strong><br/>
-            Galpón: <strong>${truck.originBarn}</strong><br/>
-            Carga: ${truck.assignedBirds.toLocaleString()} aves (~${truck.assignedCages} jaulas)
-          </div>
-        `);
-
-      // Marcador de Cliente (Destino)
-      L.marker([destCoord.lat, destCoord.lng], {
-        icon: createClientIcon(truck.customerName),
-      })
-        .addTo(map)
-        .bindPopup(`
-          <div style="font-family:sans-serif; font-size:12px; padding:2px;">
-            <b style="color:#0f172a;">DESTINO DE ENTREGA</b><br/>
-            <strong>${truck.customerName}</strong><br/>
-            Zona: ${truck.destinationZone}<br/>
-            Pedido: <strong>${truck.orderId}</strong>
-          </div>
-        `);
-
-      // Polilínea base de la ruta
-      const allCoords = truck.fullPath.map((p) => [p.lat, p.lng] as [number, number]);
-      L.polyline(allCoords, {
-        color: truck.routeColor,
-        weight: 3,
-        opacity: 0.35,
-        dashArray: '4, 8',
-      }).addTo(map);
-
-      // Polilínea de tramo recorrido
-      const completedCoords = truck.fullPath
-        .slice(0, truck.currentIndex + 1)
-        .map((p) => [p.lat, p.lng] as [number, number]);
-      const completedPoly = L.polyline(completedCoords, {
-        color: truck.routeColor,
-        weight: 5,
-        opacity: 0.9,
-      }).addTo(map);
-      completedPolylinesRef.current[truck.id] = completedPoly;
-
-      // Marcador dinámico del Camión
-      const nextCoord = truck.fullPath[Math.min(truck.fullPath.length - 1, truck.currentIndex + 1)];
-      const bearing = calculateBearing(truck.currentCoord, nextCoord);
-
-      const truckMarker = L.marker([truck.currentCoord.lat, truck.currentCoord.lng], {
-        icon: createTruckIcon(truck.plate, truck.routeColor, bearing, truck.isPlaying),
-        zIndexOffset: 1000,
-      }).addTo(map);
-
-      truckMarker.on('click', () => {
-        setSelectedTruckId(truck.id);
-      });
-
-      truckMarkersRef.current[truck.id] = truckMarker;
-    });
-
-    // Ajustar zoom inicial
-    const allPoints = trucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
-    map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
-
     return () => {
       map.remove();
       mapInstanceRef.current = null;
+      truckLayersRef.current = {};
+      hasFittedBoundsRef.current = false;
     };
   }, []);
 
-  // 2. Sincronizar Marcadores y Polilíneas con el Store
+  // 2. Sincronizar Marcadores y Polilíneas reactivamente con el Store
   useEffect(() => {
-    trucks.forEach((truck) => {
-      const marker = truckMarkersRef.current[truck.id];
-      const completedPoly = completedPolylinesRef.current[truck.id];
+    const map = mapInstanceRef.current;
+    if (!map) return;
 
-      if (marker && mapInstanceRef.current) {
-        marker.setLatLng([truck.currentCoord.lat, truck.currentCoord.lng]);
+    const activeTruckIds = new Set(trucks.map((t) => t.id));
 
-        const nextCoord = truck.fullPath[Math.min(truck.fullPath.length - 1, truck.currentIndex + 1)];
-        const bearing = calculateBearing(truck.currentCoord, nextCoord);
-
-        marker.setIcon(createTruckIcon(truck.plate, truck.routeColor, bearing, truck.isPlaying));
+    // Limpiar camiones removidos
+    Object.keys(truckLayersRef.current).forEach((id) => {
+      if (!activeTruckIds.has(id)) {
+        const layers = truckLayersRef.current[id];
+        layers.originMarker.remove();
+        layers.destMarker.remove();
+        layers.basePoly.remove();
+        layers.completedPoly.remove();
+        layers.truckMarker.remove();
+        delete truckLayersRef.current[id];
       }
+    });
 
-      if (completedPoly) {
+    // Crear o actualizar camiones
+    trucks.forEach((truck) => {
+      const nextCoord = truck.fullPath[Math.min(truck.fullPath.length - 1, truck.currentIndex + 1)];
+      const bearing = calculateBearing(truck.currentCoord, nextCoord);
+      let layers = truckLayersRef.current[truck.id];
+
+      if (!layers) {
+        const originCoord = truck.waypoints[0];
+        const destCoord = truck.waypoints[truck.waypoints.length - 1];
+
+        // Marcador de Granja (Origen)
+        const originMarker = L.marker([originCoord.lat, originCoord.lng], {
+          icon: createFarmIcon(`${truck.originFarm} (${truck.originBarn})`),
+        })
+          .addTo(map)
+          .bindPopup(`
+            <div style="font-family:sans-serif; font-size:12px; padding:2px;">
+              <b style="color:#dc2626;">GRANJA DE ORIGEN</b><br/>
+              <strong>${truck.originFarm}</strong><br/>
+              Galpón: <strong>${truck.originBarn}</strong><br/>
+              Carga: ${truck.assignedBirds.toLocaleString()} aves (~${truck.assignedCages} jaulas)
+            </div>
+          `);
+
+        // Marcador de Cliente (Destino)
+        const destMarker = L.marker([destCoord.lat, destCoord.lng], {
+          icon: createClientIcon(truck.customerName),
+        })
+          .addTo(map)
+          .bindPopup(`
+            <div style="font-family:sans-serif; font-size:12px; padding:2px;">
+              <b style="color:#0f172a;">DESTINO DE ENTREGA</b><br/>
+              <strong>${truck.customerName}</strong><br/>
+              Zona: ${truck.destinationZone}<br/>
+              Pedido: <strong>${truck.orderId}</strong>
+            </div>
+          `);
+
+        // Polilínea base de la ruta
+        const allCoords = truck.fullPath.map((p) => [p.lat, p.lng] as [number, number]);
+        const basePoly = L.polyline(allCoords, {
+          color: truck.routeColor,
+          weight: 3,
+          opacity: 0.35,
+          dashArray: '4, 8',
+        }).addTo(map);
+
+        // Polilínea de tramo recorrido
         const completedCoords = truck.fullPath
           .slice(0, truck.currentIndex + 1)
           .map((p) => [p.lat, p.lng] as [number, number]);
-        completedPoly.setLatLngs(completedCoords);
+        const completedPoly = L.polyline(completedCoords, {
+          color: truck.routeColor,
+          weight: 5,
+          opacity: 0.9,
+        }).addTo(map);
+
+        // Marcador dinámico del Camión
+        const truckMarker = L.marker([truck.currentCoord.lat, truck.currentCoord.lng], {
+          icon: createTruckIcon(truck.plate, truck.routeColor, bearing, truck.isPlaying),
+          zIndexOffset: 1000,
+        }).addTo(map);
+
+        truckMarker.on('click', () => {
+          setSelectedTruckId(truck.id);
+        });
+
+        truckLayersRef.current[truck.id] = {
+          originMarker,
+          destMarker,
+          basePoly,
+          completedPoly,
+          truckMarker,
+        };
+      } else {
+        layers.truckMarker.setLatLng([truck.currentCoord.lat, truck.currentCoord.lng]);
+        layers.truckMarker.setIcon(
+          createTruckIcon(truck.plate, truck.routeColor, bearing, truck.isPlaying)
+        );
+
+        const completedCoords = truck.fullPath
+          .slice(0, truck.currentIndex + 1)
+          .map((p) => [p.lat, p.lng] as [number, number]);
+        layers.completedPoly.setLatLngs(completedCoords);
       }
     });
+
+    // Ajustar zoom si hay camiones
+    if (trucks.length > 0 && !hasFittedBoundsRef.current) {
+      const allPoints = trucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
+      if (allPoints.length > 0) {
+        map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+        hasFittedBoundsRef.current = true;
+      }
+    } else if (trucks.length === 0) {
+      hasFittedBoundsRef.current = false;
+      map.setView([-11.95, -77.02], 11);
+    }
   }, [trucks]);
 
   // Controles
@@ -246,7 +286,11 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
   const handleFitAll = () => {
     if (!mapInstanceRef.current) return;
     const allPoints = trucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
-    mapInstanceRef.current.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+    if (allPoints.length > 0) {
+      mapInstanceRef.current.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
+    } else {
+      mapInstanceRef.current.setView([-11.95, -77.02], 11);
+    }
   };
 
   return (
@@ -254,87 +298,108 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
       {/* ========================================================================= */}
       {/* SELECTOR DE CAMIÓN EN PANTALLA */}
       {/* ========================================================================= */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {trucks.map((truck) => {
-          const isSelected = selectedTruckId === truck.id;
-          return (
-            <div
-              key={truck.id}
-              onClick={() => {
-                setSelectedTruckId(truck.id);
-                handleCenterOnTruck(truck.id);
-              }}
-              className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-                isSelected
-                  ? 'bg-white dark:bg-slate-900 border-red-500 ring-2 ring-red-500/20 shadow-md'
-                  : 'bg-white/80 dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 hover:border-slate-300'
-              }`}
-            >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span
-                    className="w-3 h-3 rounded-full"
-                    style={{ backgroundColor: truck.routeColor }}
-                  ></span>
-                  <span className="font-mono font-black text-sm text-slate-950 dark:text-white">
-                    {truck.id} &bull; {truck.plate}
-                  </span>
-                  <span className="text-[10px] px-2 py-0.5 rounded-full font-black uppercase bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                    {truck.orderId}
-                  </span>
-                </div>
-
-                <span
-                  className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
-                    truck.status === 'EN_DESTINO'
-                      ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                      : truck.status === 'EN_TRANSITO'
-                      ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
-                      : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                  }`}
-                >
-                  {truck.status === 'EN_DESTINO'
-                    ? '✓ Arribado'
-                    : truck.status === 'EN_TRANSITO'
-                    ? '🚚 En Ruta'
-                    : '⏳ En Granja'}
-                </span>
-              </div>
-
-              {/* Trayecto Origen -> Destino */}
-              <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 font-semibold mt-2">
-                <span className="truncate max-w-[140px] text-red-700 dark:text-red-400">
-                  {truck.originFarm}
-                </span>
-                <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                <span className="truncate max-w-[160px] text-slate-900 dark:text-white font-bold">
-                  {truck.customerName}
-                </span>
-              </div>
-
-              {/* Barra de Progreso y Métricas */}
-              <div className="mt-2.5">
-                <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 mb-1">
-                  <span>Progreso: <strong>{truck.progressPercent}%</strong></span>
-                  <span>
-                    Velocidad: <strong>{truck.currentSpeedKmH} km/h</strong> &bull; ETA:{' '}
-                    <strong>{truck.etaMinutes} min</strong>
-                  </span>
-                </div>
-                <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-300"
-                    style={{
-                      width: `${truck.progressPercent}%`,
-                      backgroundColor: truck.routeColor,
-                    }}
-                  ></div>
-                </div>
-              </div>
+      {trucks.length === 0 ? (
+        <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center shrink-0">
+              <Truck className="w-5 h-5" />
             </div>
-          );
-        })}
-      </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h4 className="font-bold text-sm text-slate-900 dark:text-white">Flota en Base (0 unidades en ruta)</h4>
+                <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300">
+                  En Base
+                </span>
+              </div>
+              <p className="text-xs text-slate-500">
+                Los vehículos aparecerán aquí en tiempo real cuando apruebes un pedido y le asignes transporte en Gestión Comercial.
+              </p>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {trucks.map((truck) => {
+            const isSelected = selectedTruckId === truck.id;
+            return (
+              <div
+                key={truck.id}
+                onClick={() => {
+                  setSelectedTruckId(truck.id);
+                  handleCenterOnTruck(truck.id);
+                }}
+                className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
+                  isSelected
+                    ? 'bg-white dark:bg-slate-900 border-red-500 ring-2 ring-red-500/20 shadow-md'
+                    : 'bg-white/80 dark:bg-slate-900/80 border-slate-200 dark:border-slate-800 hover:border-slate-300'
+                }`}
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="w-3 h-3 rounded-full"
+                      style={{ backgroundColor: truck.routeColor }}
+                    ></span>
+                    <span className="font-mono font-black text-sm text-slate-950 dark:text-white">
+                      {truck.id} &bull; {truck.plate}
+                    </span>
+                    <span className="text-[10px] px-2 py-0.5 rounded-full font-black uppercase bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                      {truck.orderId}
+                    </span>
+                  </div>
+
+                  <span
+                    className={`text-[10px] font-black px-2 py-0.5 rounded-full uppercase ${
+                      truck.status === 'EN_DESTINO'
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                        : truck.status === 'EN_TRANSITO'
+                        ? 'bg-blue-100 text-blue-800 dark:bg-blue-950 dark:text-blue-300'
+                        : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                    }`}
+                  >
+                    {truck.status === 'EN_DESTINO'
+                      ? '✓ Arribado'
+                      : truck.status === 'EN_TRANSITO'
+                      ? '🚚 En Ruta'
+                      : '⏳ En Granja'}
+                  </span>
+                </div>
+
+                {/* Trayecto Origen -> Destino */}
+                <div className="flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-300 font-semibold mt-2">
+                  <span className="truncate max-w-[140px] text-red-700 dark:text-red-400">
+                    {truck.originFarm}
+                  </span>
+                  <ChevronRight className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                  <span className="truncate max-w-[160px] text-slate-900 dark:text-white font-bold">
+                    {truck.customerName}
+                  </span>
+                </div>
+
+                {/* Barra de Progreso y Métricas */}
+                <div className="mt-2.5">
+                  <div className="flex items-center justify-between text-[11px] font-mono text-slate-500 mb-1">
+                    <span>Progreso: <strong>{truck.progressPercent}%</strong></span>
+                    <span>
+                      Velocidad: <strong>{truck.currentSpeedKmH} km/h</strong> &bull; ETA:{' '}
+                      <strong>{truck.etaMinutes} min</strong>
+                    </span>
+                  </div>
+                  <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full transition-all duration-300"
+                      style={{
+                        width: `${truck.progressPercent}%`,
+                        backgroundColor: truck.routeColor,
+                      }}
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* ========================================================================= */}
       {/* CONTENEDOR DEL MAPA OPENSTREETMAP */}
@@ -346,158 +411,177 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
         <button
           onClick={handleFitAll}
           className="absolute top-3 right-3 z-[400] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-xl text-xs font-bold border border-slate-200 dark:border-slate-800 shadow-md flex items-center gap-1.5 transition-colors"
-          title="Ajustar zoom para ver ambos camiones"
+          title="Ajustar zoom para ver rutas"
         >
           <Maximize2 className="w-3.5 h-3.5" />
           <span>Ver Rutas</span>
         </button>
 
         {/* HUD TELEMETRÍA FLOTANTE */}
-        <div className="absolute top-3 left-3 z-[400] max-w-sm w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-3">
-          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
-            <div className="flex items-center gap-2">
-              <span
-                className="w-3.5 h-3.5 rounded-full shrink-0"
-                style={{ backgroundColor: selectedTruck.routeColor }}
-              ></span>
+        {selectedTruck ? (
+          <div className="absolute top-3 left-3 z-[400] max-w-sm w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-3">
+            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+              <div className="flex items-center gap-2">
+                <span
+                  className="w-3.5 h-3.5 rounded-full shrink-0"
+                  style={{ backgroundColor: selectedTruck.routeColor }}
+                ></span>
+                <div>
+                  <h3 className="font-mono font-black text-sm text-slate-950 dark:text-white leading-tight">
+                    {selectedTruck.id} &bull; {selectedTruck.plate}
+                  </h3>
+                  <p className="text-[10px] text-slate-500">{selectedTruck.model}</p>
+                </div>
+              </div>
+              <button
+                onClick={() => handleCenterOnTruck(selectedTruck.id)}
+                className="p-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs"
+                title="Centrar en este camión"
+              >
+                <Maximize2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+
+            {/* Tacómetro y ETA */}
+            <div className="grid grid-cols-2 gap-2 text-center">
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-center gap-1 text-[10px] font-black text-slate-400 uppercase">
+                  <Gauge className="w-3 h-3 text-emerald-500" />
+                  <span>Velocidad</span>
+                </div>
+                <div className="text-xl font-black font-mono text-slate-950 dark:text-white mt-0.5">
+                  {selectedTruck.currentSpeedKmH}{' '}
+                  <span className="text-[10px] font-bold text-slate-400">km/h</span>
+                </div>
+              </div>
+
+              <div className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
+                <div className="flex items-center justify-center gap-1 text-[10px] font-black text-slate-400 uppercase">
+                  <Clock className="w-3 h-3 text-blue-500" />
+                  <span>Tiempo a Destino</span>
+                </div>
+                <div className="text-xl font-black font-mono text-blue-600 dark:text-blue-400 mt-0.5">
+                  {selectedTruck.etaMinutes}{' '}
+                  <span className="text-[10px] font-bold text-slate-400">min</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Detalles del Chofer y Carga */}
+            <div className="text-xs space-y-1.5 font-sans pt-1">
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                <span className="text-slate-400 font-medium">Conductor:</span>
+                <strong className="text-slate-900 dark:text-white">{selectedTruck.driverName}</strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                <span className="text-slate-400 font-medium">Carga Asignada:</span>
+                <strong className="font-mono text-emerald-700 dark:text-emerald-400">
+                  {selectedTruck.assignedBirds.toLocaleString()} aves ({selectedTruck.totalWeightTon} Ton)
+                </strong>
+              </div>
+              <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
+                <span className="text-slate-400 font-medium">Cliente &amp; Destino:</span>
+                <strong className="text-slate-900 dark:text-white truncate max-w-[170px]">
+                  {selectedTruck.customerName}
+                </strong>
+              </div>
+            </div>
+
+            {/* BARRA DE PROGRESO */}
+            <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div className="flex items-center justify-between text-[10px] font-mono font-bold text-slate-500 mb-1">
+                <span>Recorrido de Saca</span>
+                <span>{selectedTruck.progressPercent}%</span>
+              </div>
+              {!readOnly ? (
+                <input
+                  type="range"
+                  min="0"
+                  max="100"
+                  value={selectedTruck.progressPercent}
+                  onChange={(e) =>
+                    gpsSimulationStore.seekTruckProgress(selectedTruck.id, Number(e.target.value))
+                  }
+                  className="w-full accent-red-600 cursor-pointer h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg"
+                />
+              ) : (
+                <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-300"
+                    style={{
+                      width: `${selectedTruck.progressPercent}%`,
+                      backgroundColor: selectedTruck.routeColor,
+                    }}
+                  ></div>
+                </div>
+              )}
+            </div>
+
+            {/* BOTONES */}
+            <div className="flex items-center gap-1.5 pt-1">
+              {!readOnly ? (
+                <>
+                  <button
+                    onClick={() => gpsSimulationStore.toggleTruck(selectedTruck.id)}
+                    className="flex-1 py-1.5 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition-colors"
+                  >
+                    {selectedTruck.isPlaying ? (
+                      <>
+                        <Pause className="w-3.5 h-3.5" /> <span>Pausar</span>
+                      </>
+                    ) : (
+                      <>
+                        <Play className="w-3.5 h-3.5" /> <span>Iniciar Marcha</span>
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => gpsSimulationStore.resetTruck(selectedTruck.id)}
+                    className="p-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs"
+                    title="Reiniciar a Granja de Origen"
+                  >
+                    <RotateCcw className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              ) : (
+                <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 font-bold">
+                  <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
+                  <span>Transmisión en Vivo</span>
+                </div>
+              )}
+
+              <a
+                href={`https://wa.me/${selectedTruck.driverPhone.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(
+                  selectedTruck.driverName
+                )},%20te%20contacto%20desde%20Despacho%20Avícola%20GR%20por%20el%20pedido%20${selectedTruck.orderId}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="p-1.5 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1 font-bold shadow-xs"
+                title="Contactar al chofer por WhatsApp"
+              >
+                <Phone className="w-3.5 h-3.5" />
+                <span>WhatsApp Chofer</span>
+              </a>
+            </div>
+          </div>
+        ) : (
+          <div className="absolute top-3 left-3 z-[400] max-w-sm w-full bg-white/95 dark:bg-slate-900/95 backdrop-blur-md p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xl space-y-2">
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-xl bg-amber-100 dark:bg-amber-950 text-amber-600 flex items-center justify-center shrink-0">
+                <Truck className="w-4 h-4" />
+              </div>
               <div>
-                <h3 className="font-mono font-black text-sm text-slate-950 dark:text-white leading-tight">
-                  {selectedTruck.id} &bull; {selectedTruck.plate}
+                <h3 className="font-mono font-black text-sm text-slate-950 dark:text-white">
+                  Flota en Base &bull; Sin Ruta
                 </h3>
-                <p className="text-[10px] text-slate-500">{selectedTruck.model}</p>
+                <p className="text-[10px] text-slate-500">Monitoreo Satelital en Espera</p>
               </div>
             </div>
-            <button
-              onClick={() => handleCenterOnTruck(selectedTruck.id)}
-              className="p-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-lg text-xs"
-              title="Centrar en este camión"
-            >
-              <Maximize2 className="w-3.5 h-3.5" />
-            </button>
+            <p className="text-xs text-slate-600 dark:text-slate-400">
+              No hay transportes en carretera en este momento. Las unidades se desplegarán automáticamente al asignar camión a un pedido.
+            </p>
           </div>
-
-          {/* Tacómetro y ETA */}
-          <div className="grid grid-cols-2 gap-2 text-center">
-            <div className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
-              <div className="flex items-center justify-center gap-1 text-[10px] font-black text-slate-400 uppercase">
-                <Gauge className="w-3 h-3 text-emerald-500" />
-                <span>Velocidad</span>
-              </div>
-              <div className="text-xl font-black font-mono text-slate-950 dark:text-white mt-0.5">
-                {selectedTruck.currentSpeedKmH}{' '}
-                <span className="text-[10px] font-bold text-slate-400">km/h</span>
-              </div>
-            </div>
-
-            <div className="p-2 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-100 dark:border-slate-800">
-              <div className="flex items-center justify-center gap-1 text-[10px] font-black text-slate-400 uppercase">
-                <Clock className="w-3 h-3 text-blue-500" />
-                <span>Tiempo a Destino</span>
-              </div>
-              <div className="text-xl font-black font-mono text-blue-600 dark:text-blue-400 mt-0.5">
-                {selectedTruck.etaMinutes}{' '}
-                <span className="text-[10px] font-bold text-slate-400">min</span>
-              </div>
-            </div>
-          </div>
-
-          {/* Detalles del Chofer y Carga */}
-          <div className="text-xs space-y-1.5 font-sans pt-1">
-            <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-              <span className="text-slate-400 font-medium">Conductor:</span>
-              <strong className="text-slate-900 dark:text-white">{selectedTruck.driverName}</strong>
-            </div>
-            <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-              <span className="text-slate-400 font-medium">Carga Asignada:</span>
-              <strong className="font-mono text-emerald-700 dark:text-emerald-400">
-                {selectedTruck.assignedBirds.toLocaleString()} aves ({selectedTruck.totalWeightTon} Ton)
-              </strong>
-            </div>
-            <div className="flex items-center justify-between text-slate-600 dark:text-slate-300">
-              <span className="text-slate-400 font-medium">Cliente &amp; Destino:</span>
-              <strong className="text-slate-900 dark:text-white truncate max-w-[170px]">
-                {selectedTruck.customerName}
-              </strong>
-            </div>
-          </div>
-
-          {/* BARRA DE PROGRESO */}
-          <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-            <div className="flex items-center justify-between text-[10px] font-mono font-bold text-slate-500 mb-1">
-              <span>Recorrido de Saca</span>
-              <span>{selectedTruck.progressPercent}%</span>
-            </div>
-            {!readOnly ? (
-              <input
-                type="range"
-                min="0"
-                max="100"
-                value={selectedTruck.progressPercent}
-                onChange={(e) =>
-                  gpsSimulationStore.seekTruckProgress(selectedTruck.id, Number(e.target.value))
-                }
-                className="w-full accent-red-600 cursor-pointer h-1.5 bg-slate-200 dark:bg-slate-700 rounded-lg"
-              />
-            ) : (
-              <div className="w-full h-2 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full rounded-full transition-all duration-300"
-                  style={{
-                    width: `${selectedTruck.progressPercent}%`,
-                    backgroundColor: selectedTruck.routeColor,
-                  }}
-                ></div>
-              </div>
-            )}
-          </div>
-
-          {/* BOTONES: SI ES READ-ONLY, SOLO SE MUESTRA EL CONTACTO CON CHOFER Y STATUS */}
-          <div className="flex items-center gap-1.5 pt-1">
-            {!readOnly ? (
-              <>
-                <button
-                  onClick={() => gpsSimulationStore.toggleTruck(selectedTruck.id)}
-                  className="flex-1 py-1.5 bg-slate-900 dark:bg-slate-800 hover:bg-slate-800 text-white rounded-xl text-xs font-bold flex items-center justify-center gap-1 shadow-xs transition-colors"
-                >
-                  {selectedTruck.isPlaying ? (
-                    <>
-                      <Pause className="w-3.5 h-3.5" /> <span>Pausar</span>
-                    </>
-                  ) : (
-                    <>
-                      <Play className="w-3.5 h-3.5" /> <span>Iniciar Marcha</span>
-                    </>
-                  )}
-                </button>
-                <button
-                  onClick={() => gpsSimulationStore.resetTruck(selectedTruck.id)}
-                  className="p-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 text-slate-700 dark:text-slate-300 rounded-xl text-xs"
-                  title="Reiniciar a Granja de Origen"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                </button>
-              </>
-            ) : (
-              <div className="flex-1 flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 text-[11px] text-slate-600 dark:text-slate-300 font-bold">
-                <Radio className="w-3 h-3 text-emerald-500 animate-pulse" />
-                <span>Transmisión en Vivo</span>
-              </div>
-            )}
-
-            <a
-              href={`https://wa.me/${selectedTruck.driverPhone.replace(/\D/g, '')}?text=Hola%20${encodeURIComponent(
-                selectedTruck.driverName
-              )},%20te%20contacto%20desde%20Despacho%20Avícola%20GR%20por%20el%20pedido%20${selectedTruck.orderId}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="p-1.5 px-3 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 rounded-xl text-xs flex items-center gap-1 font-bold shadow-xs"
-              title="Contactar al chofer por WhatsApp"
-            >
-              <Phone className="w-3.5 h-3.5" />
-              <span>WhatsApp Chofer</span>
-            </a>
-          </div>
-        </div>
+        )}
 
         {/* LEYENDA DEL MAPA FLOTANTE */}
         <div className="absolute bottom-4 right-4 z-[400] bg-white/95 dark:bg-slate-900/95 backdrop-blur-md px-3 py-2.5 rounded-xl border border-slate-200 dark:border-slate-800 shadow-md text-[11px] font-bold text-slate-700 dark:text-slate-300 space-y-1.5">
@@ -509,14 +593,19 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
             <span className="w-2.5 h-2.5 rounded-full bg-slate-900 dark:bg-white"></span>
             <span>Cliente / Mercado (Destino)</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-500"></span>
-            <span>Ruta 1: TRAD1 &rarr; Santa Anita</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-blue-600"></span>
-            <span>Ruta 2: PACI6 &rarr; Metro Cencosud</span>
-          </div>
+          {trucks.length === 0 ? (
+            <div className="flex items-center gap-2 text-slate-400">
+              <span className="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></span>
+              <span>Sin rutas activas</span>
+            </div>
+          ) : (
+            trucks.map((t) => (
+              <div key={t.id} className="flex items-center gap-2">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.routeColor }}></span>
+                <span>{t.id}: {t.originFarm.replace('Granja ', '')} &rarr; {t.customerName.slice(0, 15)}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>

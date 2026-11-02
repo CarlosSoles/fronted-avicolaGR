@@ -111,8 +111,78 @@ export const TRUCK_2_METRO_CENCOSUD: SimulatedTruck = {
 };
 
 /**
- * IMPORTANTE: Solo el pedido PED-2026-001 está actualmente Aprobado con Transporte Designado
- * (T8C-940 - Carlos Méndez Rojas). Por ende, inicialmente SOLO 1 camión está activo en ruta.
+ * Inicialmente la flota está en base (vacía) hasta que se asigne transporte a un pedido formal.
  */
-export const INITIAL_SIMULATED_TRUCKS: SimulatedTruck[] = [TRUCK_1_SANTA_ANITA];
+export const INITIAL_SIMULATED_TRUCKS: SimulatedTruck[] = [];
+
+/**
+ * Genera dinámicamente una unidad telemática en ruta para un pedido real aprobado con transporte
+ */
+export function createSimulatedTruckFromOrder(order: any, existingTruck?: SimulatedTruck): SimulatedTruck {
+  const zoneStr = String(order.zone_code || '').toUpperCase();
+  const isNorte = zoneStr.includes('NORTE');
+  const fullPath = isNorte ? ROUTE_2_SMOOTH : ROUTE_1_SMOOTH;
+  const waypoints = isNorte ? WAYPOINTS_TRUCK_2 : WAYPOINTS_TRUCK_1;
+  const routeColor = isNorte ? '#2563eb' : '#059669';
+
+  const birds = order.allocated_quantity || order.requested_quantity || 3500;
+  const cages = order.estimated_cages || Math.ceil(birds / 8);
+  const totalWeightTon = order.estimated_total_kg
+    ? Math.round((order.estimated_total_kg / 1000) * 10) / 10
+    : Math.round(((birds * 2.35) / 1000) * 10) / 10;
+
+  const truckId = order.transport_truck_id || `VH-${String(order.order_number || '001').slice(-3)}`;
+  const plate = order.transport_plate || 'T8C-940';
+  const driverName = order.transport_driver_name || 'Carlos Méndez Rojas';
+  const driverPhone = order.transport_driver_phone || '+51 984 123 456';
+
+  let initialIndex = 0;
+  let initialProgress = 0;
+  let initialStatus: 'EN_GRANJA' | 'EN_TRANSITO' | 'EN_DESTINO' = 'EN_GRANJA';
+
+  if (existingTruck) {
+    initialIndex = existingTruck.currentIndex;
+    initialProgress = existingTruck.progressPercent;
+    initialStatus = existingTruck.status;
+  } else if (order.dispatch_phase === 'EN_TRANSITO') {
+    initialIndex = Math.floor(fullPath.length * 0.3);
+    initialProgress = 30;
+    initialStatus = 'EN_TRANSITO';
+  } else if (order.dispatch_phase === 'ENTREGADO_CONFORME') {
+    initialIndex = fullPath.length - 1;
+    initialProgress = 100;
+    initialStatus = 'EN_DESTINO';
+  }
+
+  const farmCode = order.assigned_farm_code || order.suggested_farm_code || 'TRAD1';
+  const barnCode = order.assigned_barn_code || order.suggested_barn_code || 'G-01';
+
+  return {
+    id: truckId,
+    plate,
+    model: 'Camión Baranda 3 Ejes',
+    driverName,
+    driverPhone,
+    crewName: 'Cuadrilla de Carga y Despacho',
+    orderId: order.order_number || 'PED-PENDIENTE',
+    customerName: order.client_name || 'Cliente Mayorista',
+    destinationZone: order.zone_code || 'ZONA CENTRO',
+    originFarm: `Granja ${farmCode}`,
+    originBarn: `Galpón ${barnCode}`,
+    assignedBirds: birds,
+    assignedCages: cages,
+    totalWeightTon,
+    routeColor,
+    waypoints,
+    fullPath,
+    currentIndex: initialIndex,
+    currentCoord: fullPath[initialIndex] || fullPath[0],
+    progressPercent: initialProgress,
+    currentSpeedKmH: existingTruck ? existingTruck.currentSpeedKmH : 0,
+    etaMinutes: isNorte ? 38 : 25,
+    status: initialStatus,
+    isPlaying: existingTruck ? existingTruck.isPlaying : false,
+    speedMultiplier: existingTruck ? existingTruck.speedMultiplier : 1,
+  };
+}
 

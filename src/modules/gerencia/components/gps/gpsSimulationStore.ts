@@ -1,12 +1,12 @@
 import { SimulatedTruck } from './simulationTypes';
 import {
   INITIAL_SIMULATED_TRUCKS,
-  TRUCK_2_METRO_CENCOSUD,
+  createSimulatedTruckFromOrder,
   calculateBearing,
   calculateDistanceKm,
 } from './gpsRoutesData';
 
-const STORAGE_KEY = 'avicola_gr_gps_sim_state_v6';
+const STORAGE_KEY = 'avicola_gr_gps_sim_state_v8';
 
 interface StoredSimState {
   trucksState: Array<{
@@ -250,25 +250,38 @@ class GpsSimulationStore {
   /**
    * Sincroniza dinámicamente las unidades en ruta según los pedidos reales aprobados con transporte
    */
-  public syncOrders(orders: Array<{ order_number: string; transport_assigned?: boolean; status?: string }>) {
-    const isMetroAssigned = orders.some(
+  public syncOrders(orders: Array<any>) {
+    if (!Array.isArray(orders)) return;
+
+    // Solo pedidos reales con transporte asignado y que no estén cancelados
+    const assignedOrders = orders.filter(
       (o) =>
-        o.order_number === 'PED-2026-003' &&
-        o.transport_assigned &&
-        (o.status === 'APROBADO_RESERVADO' || o.status === 'DESPACHADO')
+        o.transport_assigned === true &&
+        o.status !== 'CANCELADO'
     );
 
-    const hasTruck2 = this.trucks.some((t) => t.id === 'VH-002');
-
-    if (isMetroAssigned && !hasTruck2) {
-      this.trucks = [...this.trucks, TRUCK_2_METRO_CENCOSUD];
-      this.saveToStorage();
-      this.notify();
-    } else if (!isMetroAssigned && hasTruck2) {
-      this.trucks = this.trucks.filter((t) => t.id !== 'VH-002');
-      this.saveToStorage();
-      this.notify();
+    if (assignedOrders.length === 0) {
+      if (this.trucks.length > 0) {
+        this.trucks = [];
+        this.saveToStorage();
+        this.notify();
+      }
+      return;
     }
+
+    const currentTrucksMap = new Map(this.trucks.map((t) => [t.id, t]));
+    const nextTrucks: SimulatedTruck[] = [];
+
+    assignedOrders.forEach((order) => {
+      const truckId = order.transport_truck_id || `VH-${String(order.order_number || '001').slice(-3)}`;
+      const existing = currentTrucksMap.get(truckId);
+      const built = createSimulatedTruckFromOrder(order, existing);
+      nextTrucks.push(built);
+    });
+
+    this.trucks = nextTrucks;
+    this.saveToStorage();
+    this.notify();
   }
 }
 
