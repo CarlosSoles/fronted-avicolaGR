@@ -23,6 +23,7 @@ import {
 export const PecuariaDashboardPage: React.FC = () => {
   const [data, setData] = useState<TablaGeneralSaldoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Filtros (Sin operativo ni bloqueado, sin mixto)
@@ -45,24 +46,19 @@ export const PecuariaDashboardPage: React.FC = () => {
       const res = await apiClient<TablaGeneralSaldoResponse>(
         `/pecuaria/tabla-general-saldo?${queryParams.toString()}`
       );
-      if (res && res.data && res.data.length > 0) {
-        // Filtrar solo sexo MACHO o HEMBRA (sin mixto) y que no estén cerrados
-        const sanitized = res.data
-          .filter((d) => (d.sex === 'MACHO' || d.sex === 'HEMBRA') && !d.is_closed)
-          .map((d) => ({
-            ...d,
-            farm_code: d.farm_code || d.farm_name.substring(0, 5).toUpperCase(),
-            barn_code: d.barn_code || `G-${String(d.barn_number).padStart(2, '0')}`,
-          }));
-        if (sanitized.length > 0) {
-          setData(sanitized);
-        } else {
-          // Sin lotes registrados en la base: no se inventan galpones
-          setData([]);
-        }
-      }
-    } catch (err) {
-      console.warn('Operando con catálogo oficial sincronizado en frontend:', err);
+      // Filtrar solo sexo MACHO o HEMBRA (sin mixto) y que no estén cerrados
+      const sanitized = (res?.data || [])
+        .filter((d) => (d.sex === 'MACHO' || d.sex === 'HEMBRA') && !d.is_closed)
+        .map((d) => ({
+          ...d,
+          farm_code: d.farm_code || d.farm_name.substring(0, 5).toUpperCase(),
+          barn_code: d.barn_code || `G-${String(d.barn_number).padStart(2, '0')}`,
+        }));
+      setData(sanitized);
+      setLoadError(null);
+    } catch (err: any) {
+      console.warn('Error cargando la Tabla General de Saldo:', err);
+      setLoadError(err?.message || 'No se pudo conectar con el servidor.');
     } finally {
       setIsLoading(false);
     }
@@ -219,6 +215,21 @@ export const PecuariaDashboardPage: React.FC = () => {
           </Button>
         </div>
       </div>
+
+      {loadError && (
+        <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-rose-800 dark:text-rose-300">
+          <span className="flex items-start gap-2">
+            <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+            <span>
+              <strong className="block">No se pudo cargar la Tabla General de Saldo</strong>
+              {loadError}
+            </span>
+          </span>
+          <Button size="sm" variant="secondary" onClick={fetchData} className="self-end sm:self-auto font-bold">
+            Reintentar
+          </Button>
+        </div>
+      )}
 
       {/* 1. TARJETAS DE KPIS: 6 TARJETAS BALANCEADAS (TOTAL, ESPECIALES, DISPONIBLE SACA, MACHOS, HEMBRAS, PRIORIDAD) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
