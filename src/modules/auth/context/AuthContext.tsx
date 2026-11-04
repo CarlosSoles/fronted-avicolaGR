@@ -132,6 +132,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           throw apiErr;
         }
 
+        // En producción no se simulan sesiones: solo vale el login real del backend
+        if (!import.meta.env.DEV) {
+          throw new Error('No se pudo conectar con el servidor. Intente nuevamente en unos segundos.');
+        }
+
         // 2. Fallback de emergencia local si el backend está temporalmente no disponible
         if (cleanUser.toLowerCase() === 'admin' && cleanPass === 'admin 123') {
           const masterAdmin: UserProfile = {
@@ -268,6 +273,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const switchMockRole = (role: UserRole) => {
+    // Solo disponible en desarrollo: en producción el rol lo define el JWT del backend
+    if (!import.meta.env.DEV) return;
     if (user) {
       const updated = { ...user, role };
       setUser(updated);

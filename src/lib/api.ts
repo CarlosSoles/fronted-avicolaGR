@@ -19,8 +19,8 @@ export async function apiClient<T>(
     }
   }
 
-  // 3. Fallback de desarrollo con rol almacenado
-  if (!token) {
+  // 3. Fallback de desarrollo con rol almacenado (solo en desarrollo)
+  if (!token && import.meta.env.DEV) {
     try {
       const stored = localStorage.getItem('avicola_user');
       if (stored) {
@@ -36,9 +36,12 @@ export async function apiClient<T>(
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    Authorization: `Bearer ${token}`,
     ...(options.headers as Record<string, string>),
   };
+  // En producción, sin sesión no se envía token: el backend responde 401
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
 
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
 
