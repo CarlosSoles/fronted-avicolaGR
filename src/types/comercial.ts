@@ -3,6 +3,41 @@
 // Archivo: fronted/src/types/comercial.ts
 // ==============================================================================
 
+// ==============================================================================
+// DENSIDAD DE CARGA (AVES POR JAULA)
+// ==============================================================================
+
+export const MIN_DENSITY = 7;
+export const MAX_DENSITY = 12;
+export const DEFAULT_DENSITY = 8;
+
+/** Normaliza una densidad al rango operativo permitido (7-12). */
+export function clampDensity(density?: number | null): number {
+  const value = Number.isFinite(Number(density)) ? Number(density) : DEFAULT_DENSITY;
+  return Math.min(MAX_DENSITY, Math.max(MIN_DENSITY, Math.round(value)));
+}
+
+/**
+ * Sugerencia de densidad según el peso promedio del pedido.
+ * A mayor peso por ave, menos aves caben por jaula.
+ */
+export function suggestDensity(minWeight: number, maxWeight: number): number {
+  if (!Number.isFinite(minWeight) || !Number.isFinite(maxWeight)) return DEFAULT_DENSITY;
+  const avg = (minWeight + maxWeight) / 2;
+  if (avg < 2.2) return 12;
+  if (avg < 2.4) return 11;
+  if (avg < 2.6) return 10;
+  if (avg < 2.8) return 9;
+  if (avg < 3.0) return 8;
+  return 7;
+}
+
+/** Jaulas necesarias: ceil(aves / densidad). */
+export function computeCages(birds: number, density?: number | null): number {
+  if (!Number.isFinite(birds) || birds <= 0) return 0;
+  return Math.ceil(birds / clampDensity(density));
+}
+
 export interface Client {
   id: string;
   business_name: string;
@@ -10,6 +45,8 @@ export interface Client {
   zone_code: string;
   address?: string;
   contact_phone?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   preferred_min_weight?: number;
   preferred_max_weight?: number;
   is_active: boolean;
@@ -22,8 +59,23 @@ export interface ClientCreatePayload {
   zone_code: string;
   address?: string;
   contact_phone?: string;
+  latitude?: number | null;
+  longitude?: number | null;
   preferred_min_weight?: number;
   preferred_max_weight?: number;
+  is_active?: boolean;
+}
+
+export interface ClientUpdatePayload {
+  business_name?: string;
+  tax_id?: string;
+  zone_code?: string;
+  address?: string;
+  contact_phone?: string;
+  latitude?: number | null;
+  longitude?: number | null;
+  preferred_min_weight?: number | null;
+  preferred_max_weight?: number | null;
   is_active?: boolean;
 }
 
@@ -37,6 +89,7 @@ export interface ProgramacionTransporteItem {
   assigned_farm_code: string;
   assigned_barn_code: string;
   allocated_quantity: number;
+  density_birds_per_cage?: number;
   estimated_cages: number;
   estimated_total_kg: number;
   estimated_tons: number;
@@ -86,6 +139,7 @@ export interface SalesOrder {
   target_delivery_date: string;
   requested_quantity: number;
   allocated_quantity: number;
+  density_birds_per_cage?: number;
   min_weight_kg: number;
   max_weight_kg: number;
   sex_preference?: SexPreference;
@@ -182,6 +236,7 @@ export interface OrderCreatePayload {
   zone_code: string;
   target_delivery_date: string;
   requested_quantity: number;
+  density_birds_per_cage?: number;
   min_weight_kg: number;
   max_weight_kg: number;
   sex_preference?: SexPreference;
@@ -200,6 +255,9 @@ export interface OrderActionPayload {
   farm_code?: string;
   barn_code?: string;
   allocated_quantity?: number;
+  density_birds_per_cage?: number;
+  force_reservation?: boolean;
+  force_reason?: string;
   split_remaining?: boolean;
   split_delivery_date?: string;
 }

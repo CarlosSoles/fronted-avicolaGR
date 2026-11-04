@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { TablaGeneralSaldo } from '../components/TablaGeneralSaldo';
 import { PesajeIndividualModal } from '../components/PesajeIndividualModal';
-import { TablaGeneralSaldoItem, TablaGeneralSaldoResponse, OFFICIAL_FARMS, generateInitialOfficialData } from '@/types/pecuaria';
+import { TablaGeneralSaldoItem, TablaGeneralSaldoResponse, OFFICIAL_FARMS } from '@/types/pecuaria';
 import { apiClient } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
@@ -21,18 +21,7 @@ import {
 } from 'lucide-react';
 
 export const PecuariaDashboardPage: React.FC = () => {
-  const [data, setData] = useState<TablaGeneralSaldoItem[]>(() => {
-    const local = localStorage.getItem('avicola_pecuaria_table_items');
-    if (local) {
-      try {
-        const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {}
-    }
-    const initial = generateInitialOfficialData();
-    localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(initial));
-    return initial;
-  });
+  const [data, setData] = useState<TablaGeneralSaldoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -67,6 +56,9 @@ export const PecuariaDashboardPage: React.FC = () => {
           }));
         if (sanitized.length > 0) {
           setData(sanitized);
+        } else {
+          // Sin lotes registrados en la base: no se inventan galpones
+          setData([]);
         }
       }
     } catch (err) {
@@ -203,14 +195,14 @@ export const PecuariaDashboardPage: React.FC = () => {
       )}
 
       {/* Titulo Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-center gap-2.5">
-            <Bird className="w-7 h-7 text-red-600" />
-            Módulo Pecuaria - Tabla General de Saldo
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-lg sm:text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 tracking-tight flex items-start sm:items-center gap-2">
+            <Bird className="w-5 h-5 sm:w-7 sm:h-7 text-red-600 shrink-0 mt-0.5 sm:mt-0" />
+            <span>Módulo Pecuaria — Tabla General de Saldo</span>
           </h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            Consolidado general de galpones activos por código de granja. Galpones mayores a 45 días ordenados con <strong>máxima prioridad de cierre</strong>.
+          <p className="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 mt-1 leading-relaxed">
+            Consolidado de galpones activos por granja. Los lotes con más de 45 días se ordenan con <strong>máxima prioridad de cierre</strong>.
           </p>
         </div>
 
@@ -220,7 +212,7 @@ export const PecuariaDashboardPage: React.FC = () => {
             size="sm"
             onClick={fetchData}
             isLoading={isLoading}
-            className="border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold"
+            className="w-full sm:w-auto justify-center border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold"
           >
             <RotateCcw className="w-4 h-4 mr-1.5" />
             Actualizar
@@ -229,40 +221,40 @@ export const PecuariaDashboardPage: React.FC = () => {
       </div>
 
       {/* 1. TARJETAS DE KPIS: 6 TARJETAS BALANCEADAS (TOTAL, ESPECIALES, DISPONIBLE SACA, MACHOS, HEMBRAS, PRIORIDAD) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3.5">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
         {/* KPI 1: Saldo de Aves (Físico Total) */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-slate-400 dark:text-slate-500 mb-1">
             <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Saldo de Aves</span>
             <Bird className="w-4 h-4 text-slate-500 dark:text-slate-400" />
           </div>
-          <div className="text-2xl font-black text-slate-900 dark:text-slate-100 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 font-mono">
             {totalPhysicalCount.toLocaleString()}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Población total en granjas</div>
         </div>
 
         {/* KPI 2: Saldo Especiales */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-amber-600 dark:text-amber-500 mb-1">
             <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Saldo Especiales</span>
             <AlertTriangle className="w-4 h-4 text-amber-500" />
           </div>
-          <div className="text-2xl font-black text-amber-800 dark:text-amber-300 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-amber-800 dark:text-amber-300 font-mono">
             {totalSpecials.toLocaleString()}
           </div>
           <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Aves con defectos descontadas</div>
         </div>
 
         {/* KPI 3: Saldo Disponible para Saca (Total Aves - Especiales) */}
-        <div className="bg-emerald-50/70 dark:bg-emerald-950/25 border-2 border-emerald-400 dark:border-emerald-600/60 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-emerald-50/70 dark:bg-emerald-950/25 border-2 border-emerald-400 dark:border-emerald-600/60 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-emerald-800 dark:text-emerald-300 mb-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
               Disponible Saca
             </span>
             <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
           </div>
-          <div className="text-2xl font-black text-emerald-800 dark:text-emerald-200 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-emerald-800 dark:text-emerald-200 font-mono">
             {totalNetSaca.toLocaleString()}
           </div>
           <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5 font-bold">
@@ -271,42 +263,42 @@ export const PecuariaDashboardPage: React.FC = () => {
         </div>
 
         {/* KPI 4: Saldo Machos */}
-        <div className="bg-blue-50/80 dark:bg-[#0c1f38]/60 border-2 border-blue-400 dark:border-blue-500/50 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-blue-50/80 dark:bg-[#0c1f38]/60 border-2 border-blue-400 dark:border-blue-500/50 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-blue-900 dark:text-blue-200 mb-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-blue-950 dark:text-blue-200">
               Saldo Machos
             </span>
             <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-200 dark:bg-blue-900/60 text-blue-900 dark:text-blue-200">M</span>
           </div>
-          <div className="text-2xl font-black text-blue-950 dark:text-blue-100 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-blue-950 dark:text-blue-100 font-mono">
             {totalSaldoMachos.toLocaleString()}
           </div>
           <div className="text-[10px] text-blue-800 dark:text-blue-300 mt-0.5 font-semibold">Aves disponibles libres</div>
         </div>
 
         {/* KPI 5: Saldo Hembras */}
-        <div className="bg-rose-50/80 dark:bg-[#2e1219]/60 border-2 border-red-400 dark:border-rose-500/50 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-rose-50/80 dark:bg-[#2e1219]/60 border-2 border-red-400 dark:border-rose-500/50 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-red-900 dark:text-rose-200 mb-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-red-950 dark:text-rose-200">
               Saldo Hembras
             </span>
             <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-rose-200 dark:bg-rose-900/60 text-red-900 dark:text-rose-200">H</span>
           </div>
-          <div className="text-2xl font-black text-red-950 dark:text-rose-100 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-red-950 dark:text-rose-100 font-mono">
             {totalSaldoHembras.toLocaleString()}
           </div>
           <div className="text-[10px] text-red-800 dark:text-rose-300 mt-0.5 font-semibold">Aves disponibles libres</div>
         </div>
 
         {/* KPI 6: Prioridad Cierre (> 45 días) */}
-        <div className="bg-white dark:bg-slate-900 border-2 border-red-600 dark:border-red-600 p-4 rounded-2xl shadow-xs transition-colors">
+        <div className="bg-white dark:bg-slate-900 border-2 border-red-600 dark:border-red-600 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
           <div className="flex items-center justify-between text-red-700 dark:text-red-400 mb-1">
             <span className="text-[11px] font-black uppercase tracking-wider text-red-700 dark:text-red-400">
               Prioridad Cierre
             </span>
             <AlertOctagon className="w-4 h-4 text-red-600" />
           </div>
-          <div className="text-2xl font-black text-red-700 dark:text-red-400 font-mono">
+          <div className="text-xl sm:text-2xl font-black text-red-700 dark:text-red-400 font-mono">
             {barnsOver45Days} <span className="text-xs font-bold text-slate-500 dark:text-slate-400">galpones</span>
           </div>
           <div className="text-[10px] text-red-800 dark:text-red-300 mt-0.5 font-bold">Edad &gt; 45 días (Saca urgente)</div>
@@ -361,7 +353,7 @@ export const PecuariaDashboardPage: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 self-end sm:self-auto">
+          <div className="flex items-center gap-2 self-end sm:self-auto flex-wrap justify-end">
             {(searchQuery.trim() !== '' ||
               selectedFarmCode !== 'ALL' ||
               selectedSex !== 'ALL' ||

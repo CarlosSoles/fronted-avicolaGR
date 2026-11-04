@@ -30,10 +30,20 @@ import {
   Link2,
   Building2,
   User,
+  Copy,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
+import {
+  DateFilterValue,
+  DEFAULT_DATE_FILTER,
+  resolveRange,
+  orderDateKey,
+  matchesRange,
+  describeRange,
+} from '@/lib/dateFilters';
 import { useAuth } from '@/modules/auth/context/AuthContext';
 import { apiClient } from '@/lib/api';
 import {
@@ -44,8 +54,14 @@ import {
   AssignTransportPayload,
   OrderActionPayload,
   DispatchPhase,
+  computeCages,
+  suggestDensity,
+  clampDensity,
+  MIN_DENSITY,
+  MAX_DENSITY,
+  DEFAULT_DENSITY,
 } from '@/types/comercial';
-import { TablaGeneralSaldoItem, generateInitialOfficialData } from '@/types/pecuaria';
+import { TablaGeneralSaldoItem } from '@/types/pecuaria';
 import { FlotaGpsMap } from '../components/gps/FlotaGpsMap';
 import { gpsSimulationStore } from '../components/gps/gpsSimulationStore';
 import { DispatchLifecycleStepper } from '../components/dispatch/DispatchLifecycleStepper';
@@ -97,41 +113,32 @@ export const KNOWN_CLIENTS_METADATA: Record<string, { address: string; phone: st
   },
 };
 
-// Resuelve el nombre real completo del vendedor que capturó la venta
+// Resuelve el nombre real completo del vendedor que capturó la venta (sin inventar)
 export const resolveSellerFullName = (order?: SalesOrder | null): string => {
   if (!order) return '-';
   if (order.seller_full_name && order.seller_full_name.trim() !== '') {
     return order.seller_full_name;
   }
-  const u = (order.seller_username || '').toLowerCase();
-  if (u === 'areacomercial1') return 'Felipe';
-  if (u === 'vendedor1' || u === 'vendedor') return 'Juan Carlos Pérez Gálvez';
-  if (u === 'vendedor2') return 'María Elena Rodríguez Soto';
-  if (u === 'admin') return 'Administrador General';
-  return u.replace(/[._-]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase()) || 'Felipe';
+  if (order.seller_username && order.seller_username.trim() !== '') {
+    return order.seller_username;
+  }
+  return 'No registrado';
 };
 
-// Resuelve el cargo y especialidad comercial del vendedor
-export const resolveSellerRole = (order?: SalesOrder | null): string => {
-  const u = (order?.seller_username || '').toLowerCase();
-  if (u === 'areacomercial1') return 'Vendedor Comercial • Área Comercial';
-  if (u === 'vendedor2') return 'Ejecutiva Comercial • Canal Retail & Supermercados';
-  return 'Ejecutivo Comercial Senior • Canal Mayoristas & Avícolas';
-};
-
-// Resuelve detalles completos del cliente solicitante
+// Resuelve detalles completos del cliente solicitante (sin datos inventados)
 export const resolveClientDetails = (order?: SalesOrder | null) => {
-  if (!order) return { address: '-', phone: '-', contact: '-' };
+  if (!order) return { address: null as string | null, phone: null as string | null, contact: null as string | null };
   const meta = order.client_id ? KNOWN_CLIENTS_METADATA[order.client_id] : null;
   return {
-    address: order.delivery_address || meta?.address || `Punto de entrega en Zona ${order.zone_code}`,
-    phone: meta?.phone || '+51 987 654 321',
-    contact: meta?.contact || 'Área de Compras y Recepción',
+    address: order.delivery_address || meta?.address || null,
+    phone: meta?.phone || null,
+    contact: meta?.contact || null,
   };
 };
 
-export const GestionComercialPage: React.FC = () => {
-  const { user } = useAuth();
+type DetailTab = 'resumen' | 'carga' | 'logistica' | 'auditoria';
+
+export const GestionComercialPage: React.FC = () => {  const { user } = useAuth();
 
   // =========================================================================
   // ESTADOS PRINCIPALES
@@ -150,7 +157,8 @@ export const GestionComercialPage: React.FC = () => {
 
   // Filtros
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
-  const [selectedDate, setSelectedDate] = useState<string>('ALL');
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
+  const dateRange = useMemo(() => resolveRange(dateFilter), [dateFilter]);
   const [selectedZone, setSelectedZone] = useState<string>('ALL');
   const [selectedPhaseFilter, setSelectedPhaseFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -160,6 +168,17 @@ export const GestionComercialPage: React.FC = () => {
   const [observingOrder, setObservingOrder] = useState<SalesOrder | null>(null);
   const [transportingOrder, setTransportingOrder] = useState<SalesOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<SalesOrder | null>(null);
+  const [detailTab, setDetailTab] = useState<DetailTab>('resumen');
+  const [routeOrder, setRouteOrder] = useState<SalesOrder | null>(null);
+  const [detailDensity, setDetailDensity] = useState<number>(DEFAULT_DENSITY);
+  const [isSavingDensity, setIsSavingDensity] = useState<boolean>(false);
+
+  // Sincroniza el editor de densidad al abrir el detalle de un pedido
+  useEffect(() => {
+    if (detailOrder) {
+      setDetailDensity(detailOrder.density_birds_per_cage || DEFAULT_DENSITY);
+    }
+  }, [detailOrder?.id]);
   const [isPrintModalOpen, setIsPrintModalOpen] = useState<boolean>(false);
   const [whatsappModalOrder, setWhatsappModalOrder] = useState<SalesOrder | null>(null);
 
@@ -167,6 +186,7 @@ export const GestionComercialPage: React.FC = () => {
   const [formFarmCode, setFormFarmCode] = useState<string>('TRAD1');
   const [formBarnCode, setFormBarnCode] = useState<string>('G-01');
   const [formAllocatedQty, setFormAllocatedQty] = useState<number>(0);
+  const [formDensity, setFormDensity] = useState<number>(DEFAULT_DENSITY);
   const [formGestorObservation, setFormGestorObservation] = useState<string>('');
   const [formSplitRemaining, setFormSplitRemaining] = useState<boolean>(true);
   const [formSplitDate, setFormSplitDate] = useState<string>('');
@@ -311,23 +331,12 @@ export const GestionComercialPage: React.FC = () => {
         if (Array.isArray(rawList) && rawList.length > 0) {
           setPecuariaItems(rawList);
         } else {
-          const stored = localStorage.getItem('avicola_pecuaria_table_items');
-          if (stored) {
-            setPecuariaItems(JSON.parse(stored));
-          } else {
-            setPecuariaItems(generateInitialOfficialData());
-          }
+          // Sin lotes en la base: no se inventan galpones
+          setPecuariaItems([]);
         }
       } catch (err) {
-        console.warn('Fallback a pecuaria local:', err);
-        const stored = localStorage.getItem('avicola_pecuaria_table_items');
-        if (stored) {
-          try {
-            setPecuariaItems(JSON.parse(stored));
-          } catch {}
-        } else {
-          setPecuariaItems(generateInitialOfficialData());
-        }
+        // Sin conexión: se mantiene lo último cargado, sin generar datos sintéticos
+        console.warn('No se pudo cargar la disponibilidad de Pecuaria:', err);
       }
     } finally {
       setLoading(false);
@@ -455,7 +464,7 @@ export const GestionComercialPage: React.FC = () => {
 
     approved.forEach((o) => {
       const birds = o.allocated_quantity || o.requested_quantity || 0;
-      const cages = o.estimated_cages || Math.ceil(birds / 8);
+      const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
       const avgWeight = (o.min_weight_kg + o.max_weight_kg) / 2.0;
       const tons = o.estimated_total_kg ? o.estimated_total_kg / 1000 : (birds * avgWeight) / 1000;
 
@@ -497,8 +506,8 @@ export const GestionComercialPage: React.FC = () => {
       if (selectedStatus === 'SIN_TRANSPORTE' && (o.status !== 'APROBADO_RESERVADO' || o.transport_assigned)) return false;
       if (selectedStatus === 'CON_TRANSPORTE' && (o.status !== 'APROBADO_RESERVADO' || !o.transport_assigned)) return false;
 
-      // Filtro por fecha
-      if (selectedDate !== 'ALL' && o.target_delivery_date !== selectedDate) return false;
+      // Filtro por fecha (saca o registro)
+      if (!matchesRange(orderDateKey(o, dateFilter.criterion), dateRange)) return false;
 
       // Filtro por zona
       if (selectedZone !== 'ALL' && o.zone_code !== selectedZone) return false;
@@ -515,20 +524,20 @@ export const GestionComercialPage: React.FC = () => {
 
       return true;
     });
-  }, [orders, selectedStatus, selectedDate, selectedZone, searchQuery]);
+  }, [orders, selectedStatus, selectedZone, searchQuery, dateFilter.criterion, dateRange]);
 
   // Pedidos aprobados o despachados que requieren o ya tienen transporte (para la pestaña Despacho)
   const dispatchOrders = useMemo(() => {
     return orders
       .filter((o) => o.status === 'APROBADO_RESERVADO' || o.status === 'DESPACHADO')
-      .filter((o) => (selectedDate === 'ALL' ? true : o.target_delivery_date === selectedDate))
+      .filter((o) => matchesRange(orderDateKey(o, dateFilter.criterion), dateRange))
       .filter((o) => (selectedZone === 'ALL' ? true : o.zone_code === selectedZone))
       .filter((o) => {
         if (selectedPhaseFilter === 'ALL') return true;
         const currentPhase = o.dispatch_phase || (o.transport_assigned ? 'TRANSPORTE_ASIGNADO' : 'PENDIENTE');
         return currentPhase === selectedPhaseFilter;
       });
-  }, [orders, selectedDate, selectedZone, selectedPhaseFilter]);
+  }, [orders, dateFilter.criterion, dateRange, selectedZone, selectedPhaseFilter]);
 
   // =========================================================================
   // GESTIÓN DE ACCIONES: APROBACIÓN FORMAL Y RESERVA DE GALPÓN
@@ -538,6 +547,9 @@ export const GestionComercialPage: React.FC = () => {
     setFormFarmCode(order.suggested_farm_code || 'TRAD1');
     setFormBarnCode(order.suggested_barn_code || 'G-01');
     setFormAllocatedQty(order.requested_quantity);
+    setFormDensity(
+      order.density_birds_per_cage || suggestDensity(order.min_weight_kg, order.max_weight_kg)
+    );
     setFormGestorObservation('');
     setFormSplitRemaining(true);
     // Fecha sugerida para el split: siguiente fecha o +1 día
@@ -585,6 +597,10 @@ export const GestionComercialPage: React.FC = () => {
       showToast('⚠️ La cantidad de aves asignadas debe ser mayor a 0.');
       return;
     }
+    if (!Number.isInteger(formDensity) || formDensity < MIN_DENSITY || formDensity > MAX_DENSITY) {
+      showToast(`⚠️ La densidad debe ser un entero entre ${MIN_DENSITY} y ${MAX_DENSITY} aves por jaula.`);
+      return;
+    }
 
     setIsSubmittingApproval(true);
     try {
@@ -593,6 +609,7 @@ export const GestionComercialPage: React.FC = () => {
         farm_code: formFarmCode,
         barn_code: formBarnCode,
         allocated_quantity: formAllocatedQty,
+        density_birds_per_cage: formDensity,
         split_remaining: isSplit,
         split_delivery_date: formSplitDate,
         observation:
@@ -645,53 +662,8 @@ export const GestionComercialPage: React.FC = () => {
           showToast(`✅ Pedido ${approvingOrder.order_number} formalmente APROBADO con reserva en ${formFarmCode} - ${formBarnCode}.`);
         }
       } catch (apiErr: any) {
-        // Fallback local
-        const remaining = approvingOrder.requested_quantity - formAllocatedQty;
-        const updatedLocal: SalesOrder = {
-          ...approvingOrder,
-          status: 'APROBADO_RESERVADO',
-          assigned_farm_code: formFarmCode,
-          assigned_barn_code: formBarnCode,
-          allocated_quantity: formAllocatedQty,
-          is_split_parent: isSplit,
-          original_requested_quantity: isSplit ? approvingOrder.requested_quantity : undefined,
-          gestor_username: user?.username || 'gestor_comercial',
-          gestor_observation: payload.observation,
-          updated_at: new Date().toISOString(),
-        };
-
-        if (isSplit) {
-          const childOrder: SalesOrder = {
-            ...approvingOrder,
-            id: `ord-split-${Date.now()}`,
-            order_number: `${approvingOrder.order_number}-B`,
-            requested_quantity: remaining,
-            allocated_quantity: 0,
-            status: 'REGISTRADO',
-            target_delivery_date: formSplitDate,
-            is_split_child: true,
-            parent_order_id: approvingOrder.id,
-            original_requested_quantity: approvingOrder.requested_quantity,
-            notes: `Saldo fraccionado (${remaining.toLocaleString()} aves) de ${approvingOrder.order_number}.`,
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            audit_log: [
-              {
-                id: `log-${Date.now()}`,
-                action: 'FRACCIONADO',
-                actor_username: user?.username || 'gestor_comercial',
-                actor_role: 'gestor_comercial',
-                timestamp: new Date().toISOString(),
-                description: `Saldo fraccionado de ${remaining.toLocaleString()} aves generado automáticamente.`,
-              },
-            ],
-          };
-          setOrders((prev) => [childOrder, ...prev.map((o) => (o.id === approvingOrder.id ? updatedLocal : o))]);
-          showToast(`✂️ Pedido ${approvingOrder.order_number} aprobado parcialmente (${formAllocatedQty.toLocaleString()} aves). Saldo en nueva orden.`);
-        } else {
-          setOrders((prev) => prev.map((o) => (o.id === approvingOrder.id ? updatedLocal : o)));
-          showToast(`✅ Pedido ${approvingOrder.order_number} aprobado localmente con éxito.`);
-        }
+        // Sin respaldo local: la aprobación solo existe si la base de datos la confirmó
+        throw apiErr;
       }
 
       setApprovingOrder(null);
@@ -702,6 +674,53 @@ export const GestionComercialPage: React.FC = () => {
     }
   };
 
+  // La densidad deja de ser editable cuando el despacho ya salió de granja
+  const isDensityBlocked = detailOrder
+    ? detailOrder.dispatch_phase === 'EN_TRANSITO' || detailOrder.dispatch_phase === 'ENTREGADO_CONFORME'
+    : false;
+
+  // Ajuste de densidad posterior a la aprobación (permitido hasta antes del tránsito)
+  const handleUpdateDensity = async () => {
+    if (!detailOrder) return;
+    if (!Number.isInteger(detailDensity) || detailDensity < MIN_DENSITY || detailDensity > MAX_DENSITY) {
+      showToast(`⚠️ La densidad debe ser un entero entre ${MIN_DENSITY} y ${MAX_DENSITY} aves por jaula.`);
+      return;
+    }
+
+    setIsSavingDensity(true);
+    try {
+      const updated = await apiClient<SalesOrder>(`/comercial/orders/${detailOrder.id}/density`, {
+        method: 'PATCH',
+        body: JSON.stringify({ density_birds_per_cage: detailDensity }),
+      });
+      setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      setDetailOrder(updated);
+      showToast(
+        `✅ Densidad actualizada a ${updated.density_birds_per_cage} aves/jaula (~${(updated.estimated_cages || 0).toLocaleString()} jaulas).`
+      );
+    } catch (err: any) {
+      const msg = String(err?.message || '');
+      // Reglas de negocio del backend: no se reintenta en local
+      if (msg.includes('no puede modificarse') || msg.includes('permisos')) {
+        showToast(`⚠️ ${msg}`);
+        return;
+      }
+      // Respaldo local si el servidor no está disponible
+      const birds = detailOrder.allocated_quantity || detailOrder.requested_quantity || 0;
+      const localUpdated: SalesOrder = {
+        ...detailOrder,
+        density_birds_per_cage: detailDensity,
+        estimated_cages: computeCages(birds, detailDensity),
+        updated_at: new Date().toISOString(),
+      };
+      setOrders((prev) => prev.map((o) => (o.id === localUpdated.id ? localUpdated : o)));
+      setDetailOrder(localUpdated);
+      showToast(`ℹ️ Densidad actualizada solo en este navegador (${msg || 'servidor no disponible'}).`);
+    } finally {
+      setIsSavingDensity(false);
+    }
+  };
+
   const handleApproveOrderFromRoxi = async (order: SalesOrder, farmCode: string, barnCode: string) => {
     setIsSubmittingApproval(true);
     try {
@@ -709,6 +728,7 @@ export const GestionComercialPage: React.FC = () => {
         farm_code: farmCode,
         barn_code: barnCode,
         allocated_quantity: order.requested_quantity,
+        density_birds_per_cage: order.density_birds_per_cage || DEFAULT_DENSITY,
         observation: `Aprobado formalmente con recomendación de ROXI (Granja ${farmCode} - Galpón ${barnCode}).`,
       };
       try {
@@ -725,6 +745,8 @@ export const GestionComercialPage: React.FC = () => {
           assigned_farm_code: farmCode,
           assigned_barn_code: barnCode,
           allocated_quantity: order.requested_quantity,
+          density_birds_per_cage: payload.density_birds_per_cage,
+          estimated_cages: computeCages(order.requested_quantity, payload.density_birds_per_cage),
           gestor_username: user?.username || 'gestor_comercial',
           gestor_observation: payload.observation,
           updated_at: new Date().toISOString(),
@@ -826,7 +848,7 @@ export const GestionComercialPage: React.FC = () => {
   const transportCagesNeeded = useMemo(() => {
     if (!transportingOrder) return 0;
     const birds = transportingOrder.allocated_quantity || transportingOrder.requested_quantity || 0;
-    return transportingOrder.estimated_cages || Math.ceil(birds / 8);
+    return transportingOrder.estimated_cages || computeCages(birds, transportingOrder.density_birds_per_cage);
   }, [transportingOrder]);
 
   const isVehicleOvercapacity = useMemo(() => {
@@ -982,7 +1004,9 @@ export const GestionComercialPage: React.FC = () => {
   // =========================================================================
   const handlePrintTransportSheet = () => {
     const approvedOrdersToPrint = orders.filter((o) => o.status === 'APROBADO_RESERVADO');
-    const filteredPrint = approvedOrdersToPrint.filter((o) => (selectedDate === 'ALL' ? true : o.target_delivery_date === selectedDate));
+    const filteredPrint = approvedOrdersToPrint.filter((o) =>
+      matchesRange(orderDateKey(o, 'saca'), dateRange)
+    );
 
     if (filteredPrint.length === 0) {
       showToast('⚠️ No hay pedidos aprobados para imprimir en esta fecha.');
@@ -1001,7 +1025,8 @@ export const GestionComercialPage: React.FC = () => {
     const doc = iframe.contentWindow?.document;
     if (!doc) return;
 
-    const fechaDespacho = selectedDate === 'ALL' ? 'CONSOLIDADO GENERAL' : formatDateDisplay(selectedDate);
+    const fechaDespacho =
+      dateRange.from || dateRange.to ? describeRange(dateFilter, dateRange) : 'CONSOLIDADO GENERAL';
     const fechaEmision = new Date().toLocaleDateString('es-PE') + ' ' + new Date().toLocaleTimeString('es-PE', { hour: '2-digit', minute: '2-digit' });
 
     let sumBirds = 0;
@@ -1011,7 +1036,7 @@ export const GestionComercialPage: React.FC = () => {
     const rowsHtml = filteredPrint
       .map((o, idx) => {
         const birds = o.allocated_quantity || o.requested_quantity || 0;
-        const cages = o.estimated_cages || Math.ceil(birds / 8);
+        const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
         const avgW = (o.min_weight_kg + o.max_weight_kg) / 2.0;
         const kg = o.estimated_total_kg || birds * avgW;
         const tons = Math.round((kg / 1000) * 10) / 10;
@@ -1230,7 +1255,7 @@ export const GestionComercialPage: React.FC = () => {
             <div class="kpi-card">
               <div class="kpi-label">Total Jaulas</div>
               <div class="kpi-value" style="color: #1d4ed8;">~${sumCages.toLocaleString()}</div>
-              <div class="kpi-sub">Estándar ~8 aves / jaula</div>
+              <div class="kpi-sub">Densidad definida por pedido</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-label">Camiones Estimados</div>
@@ -1579,19 +1604,8 @@ export const GestionComercialPage: React.FC = () => {
                 <option value="CON_TRANSPORTE">🚛 Con Transporte Asignado ({metrics.assignedTransport})</option>
               </select>
 
-              {/* Filtro Fecha */}
-              <select
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-100 h-9"
-              >
-                <option value="ALL">Todas las Fechas de Saca</option>
-                {uniqueDates.map((d) => (
-                  <option key={d} value={d}>
-                    {formatDateDisplay(d)}
-                  </option>
-                ))}
-              </select>
+              {/* Filtro Fecha (criterio + rango) */}
+              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
 
               {/* Filtro Zona */}
               <select
@@ -1639,7 +1653,7 @@ export const GestionComercialPage: React.FC = () => {
                   ) : (
                     filteredOrders.map((order) => {
                       const birds = order.allocated_quantity || order.requested_quantity || 0;
-                      const cages = order.estimated_cages || Math.ceil(birds / 8);
+                      const cages = order.estimated_cages || computeCages(birds, order.density_birds_per_cage);
                       const avgW = (order.min_weight_kg + order.max_weight_kg) / 2.0;
                       const tons = order.estimated_total_kg
                         ? Math.round(order.estimated_total_kg / 100) / 10
@@ -1881,19 +1895,7 @@ export const GestionComercialPage: React.FC = () => {
             </div>
 
             <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-600 dark:text-slate-400">Fecha Despacho:</span>
-              <select
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
-              >
-                <option value="ALL">Todas las Fechas</option>
-                {uniqueDates.map((d) => (
-                  <option key={d} value={d}>
-                    {formatDateDisplay(d)}
-                  </option>
-                ))}
-              </select>
+              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
             </div>
           </div>
 
@@ -1913,7 +1915,7 @@ export const GestionComercialPage: React.FC = () => {
             ) : (
               dispatchOrders.map((order) => {
                 const birds = order.allocated_quantity || order.requested_quantity || 0;
-                const cages = order.estimated_cages || Math.ceil(birds / 8);
+                const cages = order.estimated_cages || computeCages(birds, order.density_birds_per_cage);
                 const avgW = (order.min_weight_kg + order.max_weight_kg) / 2.0;
                 const tons = order.estimated_total_kg
                   ? Math.round(order.estimated_total_kg / 100) / 10
@@ -2116,7 +2118,7 @@ export const GestionComercialPage: React.FC = () => {
                 (o) => o.transport_assigned && (o.transport_truck_id === veh.id || o.transport_plate === veh.plate)
               );
               const totalAssignedCages = assignedOrders.reduce(
-                (acc, o) => acc + (o.estimated_cages || Math.ceil((o.allocated_quantity || 0) / 8)),
+                (acc, o) => acc + (o.estimated_cages || computeCages(o.allocated_quantity || 0, o.density_birds_per_cage)),
                 0
               );
               const occupancyPct = Math.min(Math.round((totalAssignedCages / veh.capacity_cages) * 100), 100);
@@ -2283,7 +2285,7 @@ export const GestionComercialPage: React.FC = () => {
       {/* PESTAÑA 5: MONITOREO GPS EN VIVO (OPENSTREETMAP) */}
       {/* ========================================================================= */}
       {activeTab === 'mapa_gps' && (
-        <FlotaGpsMap initialSelectedTruckId={selectedGpsTruckId} readOnly={true} />
+        <FlotaGpsMap initialSelectedTruckId={selectedGpsTruckId} readOnly={true} orders={orders} />
       )}
 
       {/* ========================================================================= */}
@@ -2443,15 +2445,14 @@ export const GestionComercialPage: React.FC = () => {
 
               {/* DETECCIÓN DE INCONSISTENCIAS PECUARIAS */}
               {isStockInsufficient && (
-                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-300 animate-in fade-in">
+                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-300">
                   <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
                   <div>
-                    <span className="font-black block">⚠️ Alerta de Inconsistencia de Stock:</span>
+                    <span className="font-black block">⚠️ Saldo insuficiente en el galpón:</span>
                     <span>
-                      El galpón seleccionado dispone de solo{' '}
-                      <strong>{selectedPecuariaBarn?.barn_balance_available.toLocaleString()}</strong> aves libres,
-                      pero el pedido requiere <strong>{formAllocatedQty.toLocaleString()}</strong>. Se asignará el
-                      total disponible o requerirá completar con un segundo galpón.
+                      Dispone de <strong>{selectedPecuariaBarn?.barn_balance_available.toLocaleString()}</strong> aves
+                      libres y se intentan reservar <strong>{formAllocatedQty.toLocaleString()}</strong>.
+                      La aprobación será rechazada: ajusta la cantidad, elige otro galpón o divide el pedido.
                     </span>
                   </div>
                 </div>
@@ -2483,6 +2484,47 @@ export const GestionComercialPage: React.FC = () => {
                   onChange={(e) => setFormAllocatedQty(Number(e.target.value))}
                   className="font-mono font-bold text-sm"
                 />
+              </div>
+
+              {/* Densidad de carga (aves por jaula) */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-center justify-between gap-2 mb-1">
+                  <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300">
+                    Densidad de Carga (Aves por Jaula):
+                  </label>
+                  <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                    Rango {MIN_DENSITY}-{MAX_DENSITY}
+                  </span>
+                </div>
+                <div className="grid grid-cols-3 gap-2 items-center">
+                  <Input
+                    type="number"
+                    min={MIN_DENSITY}
+                    max={MAX_DENSITY}
+                    step="1"
+                    value={formDensity}
+                    onChange={(e) => setFormDensity(Number(e.target.value))}
+                    className="font-mono font-bold text-sm"
+                  />
+                  <div className="text-center">
+                    <span className="text-[9.5px] font-bold uppercase text-slate-500 block">Jaulas</span>
+                    <span className="text-xs font-mono font-black text-red-600 dark:text-red-400">
+                      {computeCages(formAllocatedQty, formDensity).toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="text-center">
+                    <span className="text-[9.5px] font-bold uppercase text-slate-500 block">Kg / Jaula</span>
+                    <span className="text-xs font-mono font-black text-slate-900 dark:text-slate-100">
+                      {(
+                        formDensity *
+                        ((approvingOrder.min_weight_kg + approvingOrder.max_weight_kg) / 2)
+                      ).toFixed(2)}
+                    </span>
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1.5">
+                  Sugerida según el peso del pedido; ajústela si hay razones operativas (clima, jaula o pedido del cliente).
+                </p>
               </div>
 
               {/* MEJORA 5: Aprobación Parcial y Despacho Fraccionado (Split) */}
@@ -2824,18 +2866,53 @@ export const GestionComercialPage: React.FC = () => {
       {/* ========================================================================= */}
       {detailOrder && (() => {
         const sellerFullName = resolveSellerFullName(detailOrder);
-        const sellerRole = resolveSellerRole(detailOrder);
         const clientDetails = resolveClientDetails(detailOrder);
         const birds = detailOrder.allocated_quantity || detailOrder.requested_quantity || 0;
-        const cages = detailOrder.estimated_cages || Math.ceil(birds / 8);
+        const cages = detailOrder.estimated_cages || computeCages(birds, detailOrder.density_birds_per_cage);
         const avgW = (detailOrder.min_weight_kg + detailOrder.max_weight_kg) / 2.0;
         const totalKg = detailOrder.estimated_total_kg || birds * avgW;
         const tons = Math.round((totalKg / 1000) * 10) / 10;
 
+        // Datos reales, sin placeholders
+        const approvalEvent = (detailOrder.audit_log || []).find(
+          (a) => a.action === 'APROBADO_RESERVADO'
+        );
+        const assignedFarm = detailOrder.assigned_farm_code || detailOrder.suggested_farm_code || null;
+        const assignedBarn = detailOrder.assigned_barn_code || detailOrder.suggested_barn_code || null;
+        const barnStock = assignedFarm && assignedBarn
+          ? pecuariaItems.find((b) => b.farm_code === assignedFarm && b.barn_code === assignedBarn) || null
+          : null;
+        const reservedQty = detailOrder.allocated_quantity || detailOrder.requested_quantity;
+        const stockCoversReservation = barnStock ? barnStock.barn_balance_available >= reservedQty : null;
+
+        const PHASE_ORDER: DispatchPhase[] = [
+          'TRANSPORTE_ASIGNADO',
+          'EN_GRANJA_CARGANDO',
+          'EN_TRANSITO',
+          'ENTREGADO_CONFORME',
+        ];
+        const currentPhaseIndex = detailOrder.dispatch_phase
+          ? PHASE_ORDER.indexOf(detailOrder.dispatch_phase)
+          : -1;
+        const nextPhase: DispatchPhase | null =
+          currentPhaseIndex >= 0 && currentPhaseIndex < PHASE_ORDER.length - 1
+            ? PHASE_ORDER[currentPhaseIndex + 1]
+            : null;
+
+        const phaseLabels: Record<DispatchPhase, string> = {
+          TRANSPORTE_ASIGNADO: 'Transporte asignado',
+          EN_GRANJA_CARGANDO: 'Cargando en granja',
+          EN_TRANSITO: 'En tránsito',
+          ENTREGADO_CONFORME: 'Entregado',
+        };
+
         return (
           <Modal
             isOpen={!!detailOrder}
-            onClose={() => setDetailOrder(null)}
+            onClose={() => {
+              setDetailOrder(null);
+              setDetailTab('resumen');
+            }}
             title={`Detalle Oficial del Pedido — ${detailOrder.order_number}`}
             size="2xl"
           >
@@ -2892,8 +2969,37 @@ export const GestionComercialPage: React.FC = () => {
                 </div>
               </div>
 
+              {/* Pestañas del detalle */}
+              <div className="flex flex-wrap gap-1.5 border-b border-slate-200 dark:border-slate-800 pb-1">
+                {([
+                  { key: 'resumen', label: 'Resumen' },
+                  { key: 'carga', label: 'Carga' },
+                  { key: 'logistica', label: 'Asignación y Transporte' },
+                  { key: 'auditoria', label: 'Auditoría' },
+                ] as { key: DetailTab; label: string }[]).map((t) => (
+                  <button
+                    key={t.key}
+                    type="button"
+                    onClick={() => setDetailTab(t.key)}
+                    className={`px-3 py-1.5 rounded-lg text-[11px] font-black transition-colors ${
+                      detailTab === t.key
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:bg-slate-100 dark:text-slate-300 dark:hover:bg-slate-800'
+                    }`}
+                  >
+                    {t.label}
+                  </button>
+                ))}
+              </div>
+
               {/* 2. GRID PRINCIPAL: VENDEDOR Y CLIENTE */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div
+                className={
+                  detailTab === 'resumen'
+                    ? 'grid grid-cols-1 md:grid-cols-2 gap-3.5'
+                    : 'hidden'
+                }
+              >
                 {/* TARJETA 1: VENDEDOR QUE INGRESÓ LA VENTA */}
                 <div className="p-3.5 bg-slate-50/90 dark:bg-slate-800/60 rounded-2xl border border-slate-200/80 dark:border-slate-700/80 space-y-2">
                   <div className="flex items-center gap-2 text-slate-600 dark:text-slate-300 pb-1.5 border-b border-slate-200/60 dark:border-slate-700/60">
@@ -2911,24 +3017,6 @@ export const GestionComercialPage: React.FC = () => {
                   </div>
 
                   <div className="space-y-1.5 text-[11px] pt-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Cargo / Área:</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200 text-right">
-                        {sellerRole}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Usuario en Sistema:</span>
-                      <span className="font-mono font-bold text-blue-600 dark:text-blue-400">
-                        @{detailOrder.seller_username}
-                      </span>
-                    </div>
-                    <div className="flex items-center justify-between">
-                      <span className="text-slate-500">Código Comercial:</span>
-                      <span className="font-mono text-slate-600 dark:text-slate-300">
-                        {detailOrder.seller_user_id || 'u-seller-01'}
-                      </span>
-                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-slate-500">Fecha y Hora de Ingreso:</span>
                       <span className="font-mono text-slate-700 dark:text-slate-300 font-bold">
@@ -2972,13 +3060,13 @@ export const GestionComercialPage: React.FC = () => {
                     <div>
                       <span className="text-slate-500 block">Punto / Dirección de Entrega:</span>
                       <span className="font-medium text-slate-800 dark:text-slate-200 block text-[11px] leading-tight">
-                        {clientDetails.address}
+                        {clientDetails.address || 'No registrada'}
                       </span>
                     </div>
                     <div className="flex items-center justify-between pt-0.5">
                       <span className="text-slate-500">Contacto / Teléfono:</span>
                       <span className="font-mono text-slate-700 dark:text-slate-300 font-bold">
-                        {clientDetails.phone}
+                        {clientDetails.phone || 'No registrado'}
                       </span>
                     </div>
                   </div>
@@ -2986,7 +3074,13 @@ export const GestionComercialPage: React.FC = () => {
               </div>
 
               {/* 3. ESPECIFICACIONES TÉCNICAS Y VOLUMETRÍA DEL PEDIDO */}
-              <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3">
+              <div
+                className={
+                  detailTab === 'carga'
+                    ? 'p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3'
+                    : 'hidden'
+                }
+              >
                 <span className="text-[10px] font-black uppercase tracking-wider text-slate-400 block">
                   Detalle de la Carga &bull; Volumetría y Requisitos Comerciales
                 </span>
@@ -3020,7 +3114,7 @@ export const GestionComercialPage: React.FC = () => {
                       ~{cages} jlas
                     </span>
                     <span className="text-[9.5px] text-slate-400 font-sans block">
-                      Estándar ~8 aves/jla
+                      {detailOrder.density_birds_per_cage || DEFAULT_DENSITY} aves/jaula
                     </span>
                   </div>
 
@@ -3032,6 +3126,42 @@ export const GestionComercialPage: React.FC = () => {
                     <span className="text-[9.5px] text-slate-400 font-sans block">
                       ~{Math.round(totalKg).toLocaleString()} kg total
                     </span>
+                  </div>
+                </div>
+
+                {/* Ajuste de Densidad de Carga */}
+                <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                    <div>
+                      <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block">
+                        Densidad de Carga (Aves por Jaula)
+                      </span>
+                      <span className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {isDensityBlocked
+                          ? 'Bloqueada: el despacho ya está en tránsito o entregado.'
+                          : `Editable hasta antes del tránsito • rango ${MIN_DENSITY}-${MAX_DENSITY}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Input
+                        type="number"
+                        min={MIN_DENSITY}
+                        max={MAX_DENSITY}
+                        step="1"
+                        value={detailDensity}
+                        onChange={(e) => setDetailDensity(Number(e.target.value))}
+                        disabled={isDensityBlocked || isSavingDensity}
+                        className="w-20 font-mono font-bold text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={handleUpdateDensity}
+                        disabled={isDensityBlocked || isSavingDensity}
+                        className="bg-slate-900 hover:bg-slate-800 text-white text-xs font-bold"
+                      >
+                        {isSavingDensity ? 'Guardando...' : 'Actualizar'}
+                      </Button>
+                    </div>
                   </div>
                 </div>
 
@@ -3072,7 +3202,13 @@ export const GestionComercialPage: React.FC = () => {
               </div>
 
               {/* 4. ASIGNACIÓN PECUARIA & TRANSPORTE */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
+              <div
+                className={
+                  detailTab === 'logistica'
+                    ? 'grid grid-cols-1 md:grid-cols-2 gap-3.5'
+                    : 'hidden'
+                }
+              >
                 {/* Asignación Pecuaria */}
                 <div className="p-3 bg-emerald-50/70 dark:bg-emerald-950/30 rounded-2xl border border-emerald-200/80 dark:border-emerald-900/40 space-y-1.5">
                   <div className="flex items-center justify-between">
@@ -3084,11 +3220,37 @@ export const GestionComercialPage: React.FC = () => {
                     </span>
                   </div>
                   <div className="text-xs text-slate-800 dark:text-slate-200">
-                    <strong>Granja:</strong> {detailOrder.assigned_farm_code || detailOrder.suggested_farm_code || 'TRAD1'} &bull;{' '}
-                    <strong>Galpón:</strong> {detailOrder.assigned_barn_code || detailOrder.suggested_barn_code || 'G-01'}
+                    {assignedFarm && assignedBarn ? (
+                      <>
+                        <strong>Granja:</strong> {assignedFarm} &bull; <strong>Galpón:</strong> {assignedBarn}
+                        {!detailOrder.assigned_farm_code && (
+                          <span className="ml-1 text-[10px] italic text-emerald-700 dark:text-emerald-400">(sugerido)</span>
+                        )}
+                      </>
+                    ) : (
+                      <span className="italic text-slate-500">Sin asignación</span>
+                    )}
                   </div>
+
+                  {barnStock && (
+                    <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                      <strong>Saldo del galpón:</strong> {barnStock.barn_balance_available.toLocaleString()} aves
+                      <span className={stockCoversReservation ? 'text-emerald-700 dark:text-emerald-400 font-bold' : 'text-rose-600 dark:text-rose-400 font-bold'}>
+                        {' '}({stockCoversReservation ? 'cubre' : 'no cubre'} la reserva de {reservedQty.toLocaleString()})
+                      </span>
+                    </div>
+                  )}
+
                   <div className="text-[11px] text-slate-600 dark:text-slate-400">
-                    <strong>Teléfono Balanza Granja:</strong> {detailOrder.farm_contact_phone || '+51 987 654 321 (Encargado Tradición 1)'}
+                    <strong>Teléfono Balanza Granja:</strong> {detailOrder.farm_contact_phone || 'No registrado'}
+                  </div>
+
+                  <div className="text-[11px] text-slate-600 dark:text-slate-400">
+                    <strong>Aprobado por:</strong>{' '}
+                    {detailOrder.gestor_username || 'Sin aprobación registrada'}
+                    {approvalEvent && (
+                      <> &bull; {new Date(approvalEvent.timestamp).toLocaleString('es-PE')}</>
+                    )}
                   </div>
                   {detailOrder.gestor_observation && (
                     <div className="pt-1 text-[11px] text-emerald-900 dark:text-emerald-300 italic border-t border-emerald-200/50 dark:border-emerald-900/50">
@@ -3135,7 +3297,7 @@ export const GestionComercialPage: React.FC = () => {
               </div>
 
               {/* 5. CICLO DE VIDA DEL DESPACHO */}
-              {detailOrder.transport_assigned && (
+              {detailOrder.transport_assigned && detailTab === 'logistica' && (
                 <div className="space-y-1.5 p-3.5 bg-slate-50 dark:bg-slate-800/40 rounded-2xl border border-slate-200 dark:border-slate-800">
                   <span className="text-[10px] text-slate-500 uppercase font-black tracking-wider block">
                     Ciclo de Vida del Despacho (Tracking Telemático en Vivo)
@@ -3148,32 +3310,140 @@ export const GestionComercialPage: React.FC = () => {
               )}
 
               {/* 6. HISTORIAL DE AUDITORÍA Y TRAZABILIDAD */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+              <div
+                className={
+                  detailTab === 'auditoria'
+                    ? 'pt-2 border-t border-slate-100 dark:border-slate-800'
+                    : 'hidden'
+                }
+              >
                 <AuditTimeline auditLog={detailOrder.audit_log} />
               </div>
 
               {/* 7. BOTONES DE ACCIÓN */}
-              <div className="flex justify-between items-center pt-3 border-t border-slate-100 dark:border-slate-800">
-                {detailOrder.transport_assigned ? (
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex flex-wrap items-center gap-2">
+                  {detailOrder.status === 'REGISTRADO' && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const target = detailOrder;
+                        setDetailOrder(null);
+                        handleOpenApprovalModal(target);
+                      }}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Aprobar pedido</span>
+                    </Button>
+                  )}
+
+                  {detailOrder.status === 'APROBADO_RESERVADO' && !detailOrder.transport_assigned && (
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        const target = detailOrder;
+                        setDetailOrder(null);
+                        handleOpenTransportModal(target);
+                      }}
+                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    >
+                      <Truck className="w-3.5 h-3.5" />
+                      <span>Asignar transporte</span>
+                    </Button>
+                  )}
+
+                  {detailOrder.transport_assigned && (
+                    <Button
+                      size="sm"
+                      onClick={() => setRouteOrder(detailOrder)}
+                      className="bg-slate-900 hover:bg-slate-800 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    >
+                      <MapPin className="w-3.5 h-3.5" />
+                      <span>Ver ruta</span>
+                    </Button>
+                  )}
+
+                  {detailOrder.transport_assigned && nextPhase && (
+                    <Button
+                      size="sm"
+                      onClick={() => handleUpdateDispatchPhase(detailOrder, nextPhase)}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    >
+                      <ChevronRight className="w-3.5 h-3.5" />
+                      <span>Avanzar a: {phaseLabels[nextPhase]}</span>
+                    </Button>
+                  )}
+
+                  {detailOrder.transport_assigned && (
+                    <Button
+                      size="sm"
+                      onClick={() => setWhatsappModalOrder(detailOrder)}
+                      className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 fill-white" />
+                      <span>Manifiesto WhatsApp</span>
+                    </Button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2">
                   <Button
                     size="sm"
-                    onClick={() => setWhatsappModalOrder(detailOrder)}
-                    className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
+                    variant="secondary"
+                    onClick={() => {
+                      const summary = [
+                        `Pedido: ${detailOrder.order_number}`,
+                        `Cliente: ${detailOrder.client_name}`,
+                        `Zona: ${detailOrder.zone_code}`,
+                        `Fecha de saca: ${formatDateDisplay(detailOrder.target_delivery_date)}`,
+                        `Aves solicitadas: ${detailOrder.requested_quantity.toLocaleString()}`,
+                        `Aves asignadas: ${detailOrder.allocated_quantity.toLocaleString()}`,
+                        `Rango de peso: ${detailOrder.min_weight_kg.toFixed(2)} - ${detailOrder.max_weight_kg.toFixed(2)} kg`,
+                        `Densidad: ${detailOrder.density_birds_per_cage || DEFAULT_DENSITY} aves/jaula (~${cages} jaulas)`,
+                        `Granja / Galpón: ${assignedFarm && assignedBarn ? `${assignedFarm} / ${assignedBarn}` : 'Sin asignar'}`,
+                        `Transporte: ${detailOrder.transport_assigned ? `${detailOrder.transport_plate || ''} ${detailOrder.transport_driver_name || ''}`.trim() : 'Pendiente'}`,
+                        `Estado: ${detailOrder.status}`,
+                      ].join('\n');
+                      navigator.clipboard
+                        .writeText(summary)
+                        .then(() => showToast('Resumen del pedido copiado.'))
+                        .catch(() => showToast('No se pudo copiar el resumen.'));
+                    }}
+                    className="text-xs font-bold flex items-center gap-1.5"
                   >
-                    <MessageSquare className="w-3.5 h-3.5 fill-white" />
-                    <span>Enviar Manifiesto WhatsApp</span>
+                    <Copy className="w-3.5 h-3.5" />
+                    <span>Copiar resumen</span>
                   </Button>
-                ) : (
-                  <div />
-                )}
-                <Button size="sm" variant="secondary" onClick={() => setDetailOrder(null)} className="text-xs font-bold">
-                  Cerrar Detalle
-                </Button>
+
+                  <Button size="sm" variant="secondary" onClick={() => setDetailOrder(null)} className="text-xs font-bold">
+                    Cerrar Detalle
+                  </Button>
+                </div>
               </div>
             </div>
           </Modal>
         );
       })()}
+
+      {/* Seguimiento de ruta abierto desde el detalle del pedido */}
+      {routeOrder && (
+        <Modal
+          isOpen={!!routeOrder}
+          onClose={() => setRouteOrder(null)}
+          title={`Ruta del Transporte — ${routeOrder.order_number}`}
+          description={`${routeOrder.client_name} • ${routeOrder.transport_plate || 'Unidad asignada'}`}
+          size="2xl"
+        >
+          <FlotaGpsMap
+            initialSelectedTruckId={
+              gpsSimulationStore.getTrucks().find((t) => t.orderId === routeOrder.order_number)?.id
+            }
+            readOnly={true}
+            orders={orders}
+          />
+        </Modal>
+      )}
 
       {/* MEJORA 3: Modal de Hoja de Ruta y Manifiesto WhatsApp para Chofer */}
       <WhatsAppManifestModal

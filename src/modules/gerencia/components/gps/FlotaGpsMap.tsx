@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import L from 'leaflet';
 import {
   Play,
@@ -17,6 +17,7 @@ import {
   ShieldCheck,
 } from 'lucide-react';
 import { SimulatedTruck } from './simulationTypes';
+import { SalesOrder } from '@/types/comercial';
 import { calculateBearing } from './gpsRoutesData';
 import { gpsSimulationStore } from './gpsSimulationStore';
 
@@ -82,12 +83,18 @@ interface FlotaGpsMapProps {
   initialSelectedTruckId?: string;
   readOnly?: boolean; // Por defecto true en el módulo Gestor Comercial
   onClose?: () => void;
+  /** Pedidos de los que se derivan los vendedores para el filtro de monitoreo */
+  orders?: SalesOrder[];
+  /** Muestra u oculta el selector de vendedor (se oculta en la vista del propio vendedor) */
+  showSellerFilter?: boolean;
 }
 
 export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
   initialSelectedTruckId,
   readOnly = true,
   onClose,
+  orders,
+  showSellerFilter = true,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -112,6 +119,36 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
   const [selectedTruckId, setSelectedTruckId] = useState<string>(
     initialSelectedTruckId || trucks[0]?.id || ''
   );
+  const [sellerFilter, setSellerFilter] = useState<string>('ALL');
+
+  // Vendedores disponibles según los pedidos que serán transportados
+  const sellerOptions = useMemo(() => {
+    if (!orders || orders.length === 0) return [];
+    const bySeller = new Map<string, { username: string; label: string; count: number }>();
+    orders.forEach((o) => {
+      if (!o.transport_assigned) return;
+      const username = o.seller_username || 'sin-vendedor';
+      const label = o.seller_full_name || o.seller_username || 'Sin vendedor';
+      const prev = bySeller.get(username);
+      bySeller.set(username, { username, label, count: (prev?.count || 0) + 1 });
+    });
+    return Array.from(bySeller.values()).sort((a, b) => a.label.localeCompare(b.label));
+  }, [orders]);
+
+  // Números de pedido del vendedor seleccionado (null = todos)
+  const sellerOrderNumbers = useMemo(() => {
+    if (!orders || sellerFilter === 'ALL') return null;
+    return new Set(
+      orders
+        .filter((o) => (o.seller_username || 'sin-vendedor') === sellerFilter)
+        .map((o) => o.order_number)
+    );
+  }, [orders, sellerFilter]);
+
+  const visibleTrucks = useMemo(
+    () => (sellerOrderNumbers ? trucks.filter((t) => sellerOrderNumbers.has(t.orderId)) : trucks),
+    [trucks, sellerOrderNumbers]
+  );
 
   useEffect(() => {
     const unsubscribe = gpsSimulationStore.subscribe(() => {
@@ -124,7 +161,14 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
     return unsubscribe;
   }, [selectedTruckId]);
 
-  const selectedTruck = trucks.find((t) => t.id === selectedTruckId) || trucks[0] || null;
+  const selectedTruck = visibleTrucks.find((t) => t.id === selectedTruckId) || visibleTrucks[0] || null;
+
+  // Mantener una selección válida al cambiar de vendedor
+  useEffect(() => {
+    if (visibleTrucks.length > 0 && !visibleTrucks.some((t) => t.id === selectedTruckId)) {
+      setSelectedTruckId(visibleTrucks[0].id);
+    }
+  }, [visibleTrucks, selectedTruckId]);
 
   // 1. Inicialización de Leaflet con OpenStreetMap oficial y gratuito
   useEffect(() => {
@@ -159,7 +203,7 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
     const map = mapInstanceRef.current;
     if (!map) return;
 
-    const activeTruckIds = new Set(trucks.map((t) => t.id));
+    const activeTruckIds = new Set(visibleTrucks.map((t) => t.id));
 
     // Limpiar camiones removidos
     Object.keys(truckLayersRef.current).forEach((id) => {
@@ -175,7 +219,7 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
     });
 
     // Crear o actualizar camiones
-    trucks.forEach((truck) => {
+    visibleTrucks.forEach((truck) => {
       const nextCoord = truck.fullPath[Math.min(truck.fullPath.length - 1, truck.currentIndex + 1)];
       const bearing = calculateBearing(truck.currentCoord, nextCoord);
       let layers = truckLayersRef.current[truck.id];
@@ -262,21 +306,21 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
     });
 
     // Ajustar zoom si hay camiones
-    if (trucks.length > 0 && !hasFittedBoundsRef.current) {
-      const allPoints = trucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
+    if (visibleTrucks.length > 0 && !hasFittedBoundsRef.current) {
+      const allPoints = visibleTrucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
       if (allPoints.length > 0) {
         map.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
         hasFittedBoundsRef.current = true;
       }
-    } else if (trucks.length === 0) {
+    } else if (visibleTrucks.length === 0) {
       hasFittedBoundsRef.current = false;
       map.setView([-11.95, -77.02], 11);
     }
-  }, [trucks]);
+  }, [visibleTrucks]);
 
   // Controles
   const handleCenterOnTruck = (truckId: string) => {
-    const truck = trucks.find((t) => t.id === truckId);
+    const truck = visibleTrucks.find((t) => t.id === truckId);
     if (!truck || !mapInstanceRef.current) return;
     mapInstanceRef.current.flyTo([truck.currentCoord.lat, truck.currentCoord.lng], 13, {
       duration: 1.2,
@@ -285,7 +329,7 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
 
   const handleFitAll = () => {
     if (!mapInstanceRef.current) return;
-    const allPoints = trucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
+    const allPoints = visibleTrucks.flatMap((t) => t.waypoints.map((w) => [w.lat, w.lng] as [number, number]));
     if (allPoints.length > 0) {
       mapInstanceRef.current.fitBounds(L.latLngBounds(allPoints), { padding: [50, 50] });
     } else {
@@ -298,7 +342,34 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
       {/* ========================================================================= */}
       {/* SELECTOR DE CAMIÓN EN PANTALLA */}
       {/* ========================================================================= */}
-      {trucks.length === 0 ? (
+      {/* SELECTOR DE VENDEDOR PARA EL MONITOREO */}
+      {showSellerFilter && orders && orders.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-[10px] font-black uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              Vendedor
+            </span>
+            <select
+              value={sellerFilter}
+              onChange={(e) => setSellerFilter(e.target.value)}
+              className="px-2.5 py-1.5 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-100 h-9"
+              title="Filtrar los transportes por vendedor"
+            >
+              <option value="ALL">Todos los vendedores</option>
+              {sellerOptions.map((s) => (
+                <option key={s.username} value={s.username}>
+                  {s.label} — {s.count} pedido{s.count !== 1 ? 's' : ''}
+                </option>
+              ))}
+            </select>
+          </div>
+          <span className="text-[11px] font-bold text-slate-500 dark:text-slate-400">
+            {visibleTrucks.length} unidad{visibleTrucks.length !== 1 ? 'es' : ''} en ruta
+          </span>
+        </div>
+      )}
+
+      {visibleTrucks.length === 0 ? (
         <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-50 dark:bg-amber-950/40 text-amber-600 flex items-center justify-center shrink-0">
@@ -319,7 +390,7 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {trucks.map((truck) => {
+          {visibleTrucks.map((truck) => {
             const isSelected = selectedTruckId === truck.id;
             return (
               <div
@@ -593,13 +664,13 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
             <span className="w-2.5 h-2.5 rounded-full bg-slate-900 dark:bg-white"></span>
             <span>Cliente / Mercado (Destino)</span>
           </div>
-          {trucks.length === 0 ? (
+          {visibleTrucks.length === 0 ? (
             <div className="flex items-center gap-2 text-slate-400">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-300 dark:bg-slate-700"></span>
               <span>Sin rutas activas</span>
             </div>
           ) : (
-            trucks.map((t) => (
+            visibleTrucks.map((t) => (
               <div key={t.id} className="flex items-center gap-2">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: t.routeColor }}></span>
                 <span>{t.id}: {t.originFarm.replace('Granja ', '')} &rarr; {t.customerName.slice(0, 15)}</span>

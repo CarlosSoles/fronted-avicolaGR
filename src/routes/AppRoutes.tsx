@@ -92,7 +92,7 @@ export const AppRoutes: React.FC = () => {
         <Route
           path="/comercial"
           element={
-            <ProtectedRoute allowedRoles={['vendedor', 'admin_sistema']}>
+            <ProtectedRoute allowedRoles={['vendedor', 'gestor_comercial', 'gerente_comercial', 'admin_sistema']}>
               <ComercialPage />
             </ProtectedRoute>
           }

@@ -22,6 +22,7 @@ import { SimulatedTruck } from '@/modules/gerencia/components/gps/simulationType
 
 export const AdminGpsSimulationPanel: React.FC = () => {
   const [trucks, setTrucks] = useState<SimulatedTruck[]>(gpsSimulationStore.getTrucks());
+  const [ordersList, setOrdersList] = useState<any[]>([]);
   const [globalSpeed, setGlobalSpeed] = useState<1 | 2 | 5>(gpsSimulationStore.getGlobalSpeed());
   const [isSimulatingAll, setIsSimulatingAll] = useState<boolean>(
     gpsSimulationStore.getIsSimulatingAll()
@@ -32,6 +33,7 @@ export const AdminGpsSimulationPanel: React.FC = () => {
     apiClient<any>('/comercial/orders')
       .then((res) => {
         const list = Array.isArray(res) ? res : res?.data || res?.items || [];
+        setOrdersList(list);
         gpsSimulationStore.syncOrders(list);
       })
       .catch(() => {
@@ -272,7 +274,7 @@ export const AdminGpsSimulationPanel: React.FC = () => {
         </div>
 
         {/* Mapa renderizado en modo administrador con controles interactivos */}
-        <FlotaGpsMap readOnly={false} />
+        <FlotaGpsMap readOnly={false} orders={ordersList} />
       </div>
     </div>
   );

@@ -9,17 +9,34 @@ import { apiClient } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
+import { FlotaGpsMap } from '@/modules/gerencia/components/gps/FlotaGpsMap';
+import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
+import {
+  DateFilterValue,
+  DEFAULT_DATE_FILTER,
+  resolveRange,
+  orderDateKey,
+  matchesRange,
+} from '@/lib/dateFilters';
 import {
   Client,
   ClientCreatePayload,
+  ClientUpdatePayload,
   SalesOrder,
   OrderCreatePayload,
   OrderActionPayload,
   SexPreference,
   ProgramacionTransporteItem,
   ProgramacionTransporteResponse,
+  computeCages,
+  suggestDensity,
+  clampDensity,
+  MIN_DENSITY,
+  MAX_DENSITY,
+  DEFAULT_DENSITY,
 } from '@/types/comercial';
-import { TablaGeneralSaldoItem, OFFICIAL_FARMS, generateInitialOfficialData } from '@/types/pecuaria';
+import { TablaGeneralSaldoItem, OFFICIAL_FARMS } from '@/types/pecuaria';
 import { RoxiCopilotCard } from '@/components/roxi/RoxiCopilotCard';
 import {
   ShoppingCart,
@@ -51,6 +68,7 @@ import {
   FileText,
   MapPin,
   ExternalLink,
+  Pencil,
 } from 'lucide-react';
 
 export const formatDateDisplay = (dateStr?: string | null): string => {
@@ -63,34 +81,45 @@ export const formatDateDisplay = (dateStr?: string | null): string => {
   return dateStr;
 };
 
+interface EditClientFormState {
+  business_name: string;
+  tax_id: string;
+  zone_code: string;
+  address: string;
+  contact_phone: string;
+  latitude: string;
+  longitude: string;
+  min_weight: string;
+  max_weight: string;
+  is_active: boolean;
+}
+
+const EMPTY_EDIT_CLIENT_FORM: EditClientFormState = {
+  business_name: '',
+  tax_id: '',
+  zone_code: 'METROPOLITANA',
+  address: '',
+  contact_phone: '',
+  latitude: '',
+  longitude: '',
+  min_weight: '',
+  max_weight: '',
+  is_active: true,
+};
+
 export const ComercialPage: React.FC = () => {
   const { user } = useAuth();
 
-  // Estados de navegación interna por pestañas
-  const [activeTab, setActiveTab] = useState<'programacion' | 'nuevo_pedido' | 'disponibilidad'>('programacion');
+  // Solo vendedores y administradores capturan pedidos; el gestor usa esta vista para clientes
+  const canCreateOrders = user?.role === 'vendedor' || user?.role === 'admin_sistema';
 
-  // Datos principales
+  // Estados de navegación interna por pestañas
+  const [activeTab, setActiveTab] = useState<'programacion' | 'nuevo_pedido' | 'clientes' | 'disponibilidad' | 'monitoreo'>('programacion');
+
+  // Datos principales: la base de datos es la única fuente de verdad
   const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [clients, setClients] = useState<Client[]>(() => {
-    const local = localStorage.getItem('avicola_comercial_clients');
-    if (local) {
-      try {
-        const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {}
-    }
-    return [];
-  });
-  const [pecuariaItems, setPecuariaItems] = useState<TablaGeneralSaldoItem[]>(() => {
-    const local = localStorage.getItem('avicola_pecuaria_table_items');
-    if (local) {
-      try {
-        const parsed = JSON.parse(local);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      } catch {}
-    }
-    return generateInitialOfficialData();
-  });
+  const [clients, setClients] = useState<Client[]>([]);
+  const [pecuariaItems, setPecuariaItems] = useState<TablaGeneralSaldoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
@@ -98,6 +127,13 @@ export const ComercialPage: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('ALL');
   const [zoneFilter, setZoneFilter] = useState<string>('ALL');
+  const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
+  const dateRange = useMemo(() => resolveRange(dateFilter), [dateFilter]);
+
+  // Mantiene el simulador de flota sincronizado con la cartera visible del vendedor
+  useEffect(() => {
+    gpsSimulationStore.syncOrders(orders);
+  }, [orders]);
 
   // Filtros de la pestaña Stock Disponible de Pecuaria
   const [pecFarmFilter, setPecFarmFilter] = useState<string>('ALL');
@@ -116,6 +152,8 @@ export const ComercialPage: React.FC = () => {
     return tomorrow.toISOString().split('T')[0];
   });
   const [requestedQuantityStr, setRequestedQuantityStr] = useState<string>('3000');
+  const [densityStr, setDensityStr] = useState<string>(String(DEFAULT_DENSITY));
+  const [densityTouched, setDensityTouched] = useState<boolean>(false);
   const [minWeightStr, setMinWeightStr] = useState<string>('2.20');
   const [maxWeightStr, setMaxWeightStr] = useState<string>('2.45');
   const [sexPreference, setSexPreference] = useState<SexPreference>('INDISTINTO');
@@ -144,6 +182,7 @@ export const ComercialPage: React.FC = () => {
   const [okModalOpen, setOkModalOpen] = useState<boolean>(false);
   const [observarModalOpen, setObservarModalOpen] = useState<boolean>(false);
   const [detailModalOpen, setDetailModalOpen] = useState<boolean>(false);
+  const [trackingOrder, setTrackingOrder] = useState<SalesOrder | null>(null);
 
   // Modal de Registro Rápido de Nuevo Cliente (+ Nuevo Cliente)
   const [newClientModalOpen, setNewClientModalOpen] = useState<boolean>(false);
@@ -154,8 +193,42 @@ export const ComercialPage: React.FC = () => {
   const [newClientPhone, setNewClientPhone] = useState<string>('');
   const [newClientMinWeight, setNewClientMinWeight] = useState<string>('2.20');
   const [newClientMaxWeight, setNewClientMaxWeight] = useState<string>('2.50');
+  const [newClientLat, setNewClientLat] = useState<string>('');
+  const [newClientLng, setNewClientLng] = useState<string>('');
   const [newClientError, setNewClientError] = useState<string | null>(null);
   const [isSavingClient, setIsSavingClient] = useState<boolean>(false);
+
+  // Pestaña "Clientes": listado y edición de la ficha del cliente
+  const [clientListSearch, setClientListSearch] = useState<string>('');
+  const [editClientModalOpen, setEditClientModalOpen] = useState<boolean>(false);
+  const [editingClientId, setEditingClientId] = useState<string>('');
+  const [editClientForm, setEditClientForm] = useState<EditClientFormState>(EMPTY_EDIT_CLIENT_FORM);
+  const [editClientError, setEditClientError] = useState<string | null>(null);
+  const [isSavingClientEdit, setIsSavingClientEdit] = useState<boolean>(false);
+
+  const handleOpenEditClient = (client: Client) => {
+    setEditingClientId(client.id);
+    setEditClientForm({
+      business_name: client.business_name,
+      tax_id: client.tax_id,
+      zone_code: client.zone_code,
+      address: client.address || '',
+      contact_phone: client.contact_phone || '',
+      latitude: client.latitude !== null && client.latitude !== undefined ? String(client.latitude) : '',
+      longitude: client.longitude !== null && client.longitude !== undefined ? String(client.longitude) : '',
+      min_weight:
+        client.preferred_min_weight !== null && client.preferred_min_weight !== undefined
+          ? String(client.preferred_min_weight)
+          : '',
+      max_weight:
+        client.preferred_max_weight !== null && client.preferred_max_weight !== undefined
+          ? String(client.preferred_max_weight)
+          : '',
+      is_active: client.is_active,
+    });
+    setEditClientError(null);
+    setEditClientModalOpen(true);
+  };
 
   // Modal de Hoja de Programación Diaria para Transporte (pedidos con OK)
   const [transportSheetOpen, setTransportSheetOpen] = useState<boolean>(false);
@@ -166,6 +239,7 @@ export const ComercialPage: React.FC = () => {
   const [okFarmCode, setOkFarmCode] = useState<string>('');
   const [okBarnCode, setOkBarnCode] = useState<string>('');
   const [okAllocatedQtyStr, setOkAllocatedQtyStr] = useState<string>('');
+  const [okDensityStr, setOkDensityStr] = useState<string>(String(DEFAULT_DENSITY));
   const [okObservation, setOkObservation] = useState<string>('');
 
   // Campos para la observación
@@ -231,24 +305,11 @@ export const ComercialPage: React.FC = () => {
           setPecuariaItems(sanitized);
           localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(sanitized));
         } else {
-          const storedPecuaria = localStorage.getItem('avicola_pecuaria_table_items');
-          if (storedPecuaria) {
-            setPecuariaItems(JSON.parse(storedPecuaria));
-          } else {
-            const initial = generateInitialOfficialData();
-            setPecuariaItems(initial);
-            localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(initial));
-          }
+          // Sin lotes en la base: no se inventan galpones
+          setPecuariaItems([]);
         }
       } catch {
-        const storedPecuaria = localStorage.getItem('avicola_pecuaria_table_items');
-        if (storedPecuaria) {
-          setPecuariaItems(JSON.parse(storedPecuaria));
-        } else {
-          const initial = generateInitialOfficialData();
-          setPecuariaItems(initial);
-          localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(initial));
-        }
+        // Sin conexión: se mantiene lo último cargado, sin generar datos sintéticos
       }
     } catch (err: any) {
       console.warn('Error al cargar datos comerciales:', err);
@@ -262,52 +323,8 @@ export const ComercialPage: React.FC = () => {
   }, []);
 
   // ---------------------------------------------------------------------------
-  // GESTIÓN DE DISPONIBILIDAD Y RESERVA EN TIEMPO REAL (PECUARIA <-> COMERCIAL)
+  // DISPONIBILIDAD EN VIVO (el saldo lo administra el backend, no el navegador)
   // ---------------------------------------------------------------------------
-  const reserveBarnStock = (farmCode: string, barnCode: string, quantity: number) => {
-    setPecuariaItems((prev) => {
-      const updated = prev.map((item) => {
-        if (item.farm_code === farmCode && item.barn_code === barnCode) {
-          const newReserved = (item.reserved_count || 0) + quantity;
-          const newAvailable = Math.max(
-            0,
-            item.physical_count - item.specials_general_count - newReserved - (item.sold_pending_count || 0)
-          );
-          return {
-            ...item,
-            reserved_count: newReserved,
-            barn_balance_available: newAvailable,
-          };
-        }
-        return item;
-      });
-      localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
-  const releaseBarnStock = (farmCode: string, barnCode: string, quantity: number) => {
-    setPecuariaItems((prev) => {
-      const updated = prev.map((item) => {
-        if (item.farm_code === farmCode && item.barn_code === barnCode) {
-          const newReserved = Math.max(0, (item.reserved_count || 0) - quantity);
-          const newAvailable = Math.max(
-            0,
-            item.physical_count - item.specials_general_count - newReserved - (item.sold_pending_count || 0)
-          );
-          return {
-            ...item,
-            reserved_count: newReserved,
-            barn_balance_available: newAvailable,
-          };
-        }
-        return item;
-      });
-      localStorage.setItem('avicola_pecuaria_table_items', JSON.stringify(updated));
-      return updated;
-    });
-  };
-
   // Disponibilidad en vivo del galpón sugerido en el formulario de Nuevo Pedido
   const selectedBarnAvailability = useMemo(() => {
     return pecuariaItems.find(
@@ -322,6 +339,16 @@ export const ComercialPage: React.FC = () => {
     );
   }, [pecuariaItems, okFarmCode, okBarnCode]);
 
+  // Sugerencia automática de densidad según el peso promedio (el vendedor puede corregirla)
+  useEffect(() => {
+    if (densityTouched) return;
+    const minW = parseFloat(minWeightStr);
+    const maxW = parseFloat(maxWeightStr);
+    if (Number.isFinite(minW) && Number.isFinite(maxW) && minW > 0 && maxW > 0) {
+      setDensityStr(String(suggestDensity(minW, maxW)));
+    }
+  }, [minWeightStr, maxWeightStr, densityTouched]);
+
   // Estimación Logística y Tonelaje en tiempo real (Kg, Toneladas, Jaulas y Camiones)
   const logisticsCalculation = useMemo(() => {
     const qty = parseInt(requestedQuantityStr, 10) || 0;
@@ -330,19 +357,31 @@ export const ComercialPage: React.FC = () => {
     const avgW = minW + maxW > 0 ? (minW + maxW) / 2 : 2.30;
     const totalKg = Math.round(qty * avgW * 100) / 100;
     const totalTons = Math.round((totalKg / 1000) * 100) / 100;
-    const cagesNeeded = Math.ceil(qty / 8); // Estándar de 8 aves por jaula de transporte
-    const tripsEstimate = Math.max(1, Math.ceil(cagesNeeded / 450)); // Camión avícola estándar de ~450 jaulas (3,600 aves)
+    const density = clampDensity(parseFloat(densityStr));
+    const cagesNeeded = computeCages(qty, density);
+    const kgPerCage = Math.round(density * avgW * 100) / 100;
+    const tripsEstimate = Math.max(1, Math.ceil(cagesNeeded / 450)); // Camión avícola estándar de ~450 jaulas
     return {
       qty,
       avgW: Math.round(avgW * 100) / 100,
       totalKg,
       totalTons,
+      density,
       cagesNeeded,
+      kgPerCage,
       tripsEstimate,
     };
-  }, [requestedQuantityStr, minWeightStr, maxWeightStr]);
+  }, [requestedQuantityStr, minWeightStr, maxWeightStr, densityStr]);
 
-  // Al seleccionar cliente del catálogo, auto-llenar datos preferidos
+  // Aplica a la entrega del pedido la dirección y coordenadas registradas en la ficha del cliente
+  const applyClientDeliveryData = (c: Client) => {
+    setDeliveryAddress(c.address || '');
+    setDeliveryLat(c.latitude !== null && c.latitude !== undefined ? String(c.latitude) : '');
+    setDeliveryLng(c.longitude !== null && c.longitude !== undefined ? String(c.longitude) : '');
+    setRawCoordsInput('');
+  };
+
+  // Al seleccionar cliente del catálogo, auto-llenar datos preferidos y punto de entrega
   const handleSelectClient = (clientId: string) => {
     setSelectedClientId(clientId);
     const c = clients.find((item) => item.id === clientId);
@@ -352,9 +391,8 @@ export const ComercialPage: React.FC = () => {
       setZoneCode(c.zone_code);
       if (c.preferred_min_weight) setMinWeightStr(String(c.preferred_min_weight));
       if (c.preferred_max_weight) setMaxWeightStr(String(c.preferred_max_weight));
-      if (c.address && !deliveryAddress) {
-        setDeliveryAddress(c.address);
-      }
+      // Las coordenadas del cliente se cargan siempre; el vendedor puede ajustarlas luego
+      applyClientDeliveryData(c);
     }
   };
 
@@ -367,6 +405,8 @@ export const ComercialPage: React.FC = () => {
     setNewClientPhone('');
     setNewClientMinWeight(minWeightStr || '2.20');
     setNewClientMaxWeight(maxWeightStr || '2.50');
+    setNewClientLat(deliveryLat || '');
+    setNewClientLng(deliveryLng || '');
     setNewClientError(null);
     setNewClientModalOpen(true);
   };
@@ -400,6 +440,28 @@ export const ComercialPage: React.FC = () => {
       return;
     }
 
+    // Coordenadas satelitales del punto de entrega (opcionales, pero se piden ambas juntas)
+    let lat: number | null = null;
+    let lng: number | null = null;
+    const latStr = newClientLat.trim();
+    const lngStr = newClientLng.trim();
+    if (latStr || lngStr) {
+      if (!latStr || !lngStr) {
+        setNewClientError('Debe ingresar latitud y longitud juntas para fijar el punto de entrega.');
+        return;
+      }
+      lat = parseFloat(latStr);
+      lng = parseFloat(lngStr);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        setNewClientError('La latitud debe ser un número entre -90 y 90.');
+        return;
+      }
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+        setNewClientError('La longitud debe ser un número entre -180 y 180.');
+        return;
+      }
+    }
+
     setIsSavingClient(true);
     try {
       const payload: ClientCreatePayload = {
@@ -408,32 +470,18 @@ export const ComercialPage: React.FC = () => {
         zone_code: newClientZone,
         address: newClientAddress.trim() || undefined,
         contact_phone: newClientPhone.trim() || undefined,
+        latitude: lat,
+        longitude: lng,
         preferred_min_weight: minW,
         preferred_max_weight: maxW,
         is_active: true,
       };
 
-      let createdClient: Client;
-      try {
-        createdClient = await apiClient<Client>('/comercial/clients', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // En caso de fallo de red o modo offline
-        createdClient = {
-          id: `client-${Date.now()}`,
-          business_name: payload.business_name,
-          tax_id: payload.tax_id,
-          zone_code: payload.zone_code,
-          address: payload.address,
-          contact_phone: payload.contact_phone,
-          preferred_min_weight: payload.preferred_min_weight,
-          preferred_max_weight: payload.preferred_max_weight,
-          is_active: true,
-          created_at: new Date().toISOString(),
-        };
-      }
+      // El cliente se persiste en la base de datos: si falla, se informa y no se simula localmente.
+      const createdClient = await apiClient<Client>('/comercial/clients', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
 
       // Actualizar state y caché de clientes
       const updated = [createdClient, ...clients];
@@ -451,8 +499,8 @@ export const ComercialPage: React.FC = () => {
       if (createdClient.preferred_max_weight) {
         setMaxWeightStr(String(createdClient.preferred_max_weight));
       }
-      if (createdClient.address && !deliveryAddress) {
-        setDeliveryAddress(createdClient.address);
+      if (createdClient.address || lat !== null || lng !== null) {
+        applyClientDeliveryData(createdClient);
       }
 
       setNewClientModalOpen(false);
@@ -463,6 +511,115 @@ export const ComercialPage: React.FC = () => {
       setIsSavingClient(false);
     }
   };
+
+  // Guardar cambios de la ficha de un cliente existente
+  const handleSaveEditClient = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setEditClientError(null);
+
+    const bName = editClientForm.business_name.trim();
+    const tId = editClientForm.tax_id.trim();
+    if (!bName || !tId) {
+      setEditClientError('La razón social y el RUC/DNI son obligatorios.');
+      return;
+    }
+
+    if (clients.some((c) => c.id !== editingClientId && c.tax_id.toLowerCase() === tId.toLowerCase())) {
+      setEditClientError(`Ya existe otro cliente registrado con el RUC/DNI "${tId}".`);
+      return;
+    }
+
+    // Coordenadas: opcionales, pero ambas juntas y dentro de rango
+    let lat: number | null = null;
+    let lng: number | null = null;
+    const latStr = editClientForm.latitude.trim();
+    const lngStr = editClientForm.longitude.trim();
+    if (latStr || lngStr) {
+      if (!latStr || !lngStr) {
+        setEditClientError('Debe ingresar latitud y longitud juntas, o dejar ambas vacías.');
+        return;
+      }
+      lat = parseFloat(latStr);
+      lng = parseFloat(lngStr);
+      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        setEditClientError('La latitud debe ser un número entre -90 y 90.');
+        return;
+      }
+      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+        setEditClientError('La longitud debe ser un número entre -180 y 180.');
+        return;
+      }
+    }
+
+    const minW = editClientForm.min_weight ? parseFloat(editClientForm.min_weight) : null;
+    const maxW = editClientForm.max_weight ? parseFloat(editClientForm.max_weight) : null;
+    if (minW !== null && maxW !== null && minW > maxW) {
+      setEditClientError('El peso mínimo preferente no puede ser mayor al peso máximo.');
+      return;
+    }
+
+    setIsSavingClientEdit(true);
+    try {
+      const payload: ClientUpdatePayload = {
+        business_name: bName,
+        tax_id: tId,
+        zone_code: editClientForm.zone_code,
+        address: editClientForm.address.trim(),
+        contact_phone: editClientForm.contact_phone.trim(),
+        latitude: lat,
+        longitude: lng,
+        preferred_min_weight: minW,
+        preferred_max_weight: maxW,
+        is_active: editClientForm.is_active,
+      };
+
+      // La actualización se persiste en la base de datos: si falla, se informa.
+      const updatedClient = await apiClient<Client>(`/comercial/clients/${editingClientId}`, {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+
+      const updatedList = clients.map((c) => (c.id === editingClientId ? updatedClient : c));
+      setClients(updatedList);
+      localStorage.setItem('avicola_comercial_clients', JSON.stringify(updatedList));
+
+      // Si es el cliente ya seleccionado en el pedido, refrescar su punto de entrega
+      if (selectedClientId === editingClientId) {
+        setClientName(updatedClient.business_name);
+        setClientTaxId(updatedClient.tax_id);
+        setZoneCode(updatedClient.zone_code);
+        if (updatedClient.preferred_min_weight) setMinWeightStr(String(updatedClient.preferred_min_weight));
+        if (updatedClient.preferred_max_weight) setMaxWeightStr(String(updatedClient.preferred_max_weight));
+        applyClientDeliveryData(updatedClient);
+      }
+
+      setEditClientModalOpen(false);
+      showToast(`✔ Cliente "${updatedClient.business_name}" actualizado correctamente.`);
+    } catch (err: any) {
+      setEditClientError(err?.message || 'Error al actualizar el cliente.');
+    } finally {
+      setIsSavingClientEdit(false);
+    }
+  };
+
+  // Cliente actualmente seleccionado en el formulario de pedido
+  const selectedClientData = useMemo(
+    () => clients.find((c) => c.id === selectedClientId) || null,
+    [clients, selectedClientId]
+  );
+
+  // Listado filtrado para la pestaña Clientes
+  const filteredClients = useMemo(() => {
+    const q = clientListSearch.toLowerCase().trim();
+    if (!q) return clients;
+    return clients.filter(
+      (c) =>
+        c.business_name.toLowerCase().includes(q) ||
+        c.tax_id.toLowerCase().includes(q) ||
+        c.zone_code.toLowerCase().includes(q) ||
+        (c.address || '').toLowerCase().includes(q)
+    );
+  }, [clients, clientListSearch]);
 
   // Lista de pedidos con OK Gestor (APROBADO_RESERVADO)
   const approvedOrdersList = useMemo(() => {
@@ -498,7 +655,7 @@ export const ComercialPage: React.FC = () => {
 
     transportFilteredOrders.forEach((o) => {
       const birds = o.allocated_quantity || o.requested_quantity || 0;
-      const cages = o.estimated_cages || Math.ceil(birds / 8);
+      const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
       const kg = o.estimated_total_kg || Math.round(birds * ((o.min_weight_kg + o.max_weight_kg) / 2));
       totalBirds += birds;
       totalCages += cages;
@@ -552,7 +709,7 @@ export const ComercialPage: React.FC = () => {
 
     const rowsHtml = transportFilteredOrders.map((o, idx) => {
       const birds = o.allocated_quantity || o.requested_quantity || 0;
-      const cages = o.estimated_cages || Math.ceil(birds / 8);
+      const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
       const tons = o.estimated_total_kg
         ? Math.round(o.estimated_total_kg / 100) / 10
         : Math.round((birds * ((o.min_weight_kg + o.max_weight_kg) / 2)) / 1000 * 10) / 10;
@@ -760,7 +917,7 @@ export const ComercialPage: React.FC = () => {
             <div class="kpi-card">
               <div class="kpi-label">Total Jaulas</div>
               <div class="kpi-value" style="color: #1d4ed8;">~${transportSummary.totalCages.toLocaleString()}</div>
-              <div class="kpi-sub">Estándar ~8 aves / jaula</div>
+              <div class="kpi-sub">Densidad definida por pedido</div>
             </div>
             <div class="kpi-card">
               <div class="kpi-label">Camiones Estimados</div>
@@ -838,7 +995,7 @@ export const ComercialPage: React.FC = () => {
         'RUC',
         'Zona Entrega',
         'Aves Asignadas',
-        'Jaulas (~8 aves)',
+        'Jaulas',
         'Sexo',
         'Rango Peso Solicitado (kg)',
         'Toneladas Estimadas',
@@ -849,7 +1006,7 @@ export const ComercialPage: React.FC = () => {
 
       const rows = transportFilteredOrders.map((o) => {
         const birds = o.allocated_quantity || o.requested_quantity || 0;
-        const cages = o.estimated_cages || Math.ceil(birds / 8);
+        const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
         const kg = o.estimated_total_kg || Math.round(birds * ((o.min_weight_kg + o.max_weight_kg) / 2));
         const tons = Math.round((kg / 1000) * 10) / 10;
         const sex = o.sex_preference || 'INDISTINTO';
@@ -919,6 +1076,35 @@ export const ComercialPage: React.FC = () => {
       return;
     }
 
+    // Punto de entrega: si se fijan coordenadas, deben venir ambas y dentro de rango
+    if ((deliveryLat && !deliveryLng) || (!deliveryLat && deliveryLng)) {
+      setFormError('Ingrese latitud y longitud juntas para fijar el punto de entrega.');
+      return;
+    }
+    if (deliveryLat && deliveryLng) {
+      const latNum = parseFloat(deliveryLat);
+      const lngNum = parseFloat(deliveryLng);
+      if (!Number.isFinite(latNum) || latNum < -90 || latNum > 90) {
+        setFormError('La latitud del punto de entrega debe estar entre -90 y 90.');
+        return;
+      }
+      if (!Number.isFinite(lngNum) || lngNum < -180 || lngNum > 180) {
+        setFormError('La longitud del punto de entrega debe estar entre -180 y 180.');
+        return;
+      }
+    }
+
+    // Densidad de carga (aves por jaula): rango operativo 7-12
+    const densityNum = parseFloat(densityStr);
+    if (!Number.isFinite(densityNum) || densityNum < MIN_DENSITY || densityNum > MAX_DENSITY) {
+      setFormError(`La densidad debe estar entre ${MIN_DENSITY} y ${MAX_DENSITY} aves por jaula.`);
+      return;
+    }
+    if (!Number.isInteger(densityNum)) {
+      setFormError('La densidad de carga debe ser un número entero de aves por jaula.');
+      return;
+    }
+
     let finalNotes = orderNotes.trim();
     if (selectedBarnAvailability && qty > selectedBarnAvailability.barn_balance_available) {
       const deficit = qty - selectedBarnAvailability.barn_balance_available;
@@ -941,6 +1127,7 @@ export const ComercialPage: React.FC = () => {
       zone_code: zoneCode,
       target_delivery_date: targetDeliveryDate,
       requested_quantity: qty,
+      density_birds_per_cage: densityNum,
       min_weight_kg: minW,
       max_weight_kg: maxW,
       sex_preference: sexPreference,
@@ -955,48 +1142,11 @@ export const ComercialPage: React.FC = () => {
     };
 
     try {
-      let createdOrder: SalesOrder;
-      try {
-        createdOrder = await apiClient<SalesOrder>('/comercial/orders', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // Fallback local
-        const nextNum = orders.length + 1;
-        const matchedClient = clients.find(
-          (c) => c.id === payload.client_id || (payload.client_tax_id && c.tax_id === payload.client_tax_id)
-        );
-        createdOrder = {
-          id: `ord-loc-${Date.now()}`,
-          order_number: `PED-2026-${String(nextNum).padStart(3, '0')}`,
-          client_id: payload.client_id,
-          client_name: payload.client_name,
-          client_tax_id: payload.client_tax_id,
-          seller_user_id: user?.id || 'vendedor',
-          seller_username: user?.username || 'vendedor',
-          seller_full_name: user?.full_name || 'Juan Carlos Pérez Gálvez',
-          zone_code: payload.zone_code,
-          target_delivery_date: payload.target_delivery_date,
-          requested_quantity: payload.requested_quantity,
-          allocated_quantity: 0,
-          min_weight_kg: payload.min_weight_kg,
-          max_weight_kg: payload.max_weight_kg,
-          sex_preference: sexPreference,
-          estimated_total_kg: logisticsCalculation.totalKg,
-          estimated_cages: logisticsCalculation.cagesNeeded,
-          suggested_farm_code: payload.suggested_farm_code,
-          suggested_barn_code: payload.suggested_barn_code,
-          status: isDraft ? 'BORRADOR' : 'REGISTRADO',
-          external_reference: payload.external_reference,
-          notes: payload.notes,
-          delivery_address: payload.delivery_address || matchedClient?.address || undefined,
-          delivery_latitude: payload.delivery_latitude,
-          delivery_longitude: payload.delivery_longitude,
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-      }
+      // El pedido se persiste en la base de datos: si falla, se informa y no se simula localmente.
+      const createdOrder = await apiClient<SalesOrder>('/comercial/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
 
       const updated = [createdOrder, ...orders];
       setOrders(updated);
@@ -1025,6 +1175,9 @@ export const ComercialPage: React.FC = () => {
     setOkFarmCode(order.assigned_farm_code || order.suggested_farm_code || 'TRAD1');
     setOkBarnCode(order.assigned_barn_code || order.suggested_barn_code || 'G-01');
     setOkAllocatedQtyStr(String(order.requested_quantity));
+    setOkDensityStr(
+      String(order.density_birds_per_cage || suggestDensity(order.min_weight_kg, order.max_weight_kg))
+    );
     setOkObservation(`Aprobación formal verificada por Gestor Comercial (${user?.username || 'gestor'}). Stock apto para saca programada.`);
     setOkModalOpen(true);
   };
@@ -1039,10 +1192,19 @@ export const ComercialPage: React.FC = () => {
       return;
     }
 
-    if (okBarnAvailability && okBarnAvailability.barn_balance_available <= 0) {
-      if (!window.confirm(`El galpón [${okBarnCode}] de [${okFarmCode}] no tiene saldo libre disponible (0 aves). ¿Desea proceder de todos modos?`)) {
-        return;
-      }
+    const densityNum = parseInt(okDensityStr, 10);
+    if (!Number.isFinite(densityNum) || densityNum < MIN_DENSITY || densityNum > MAX_DENSITY) {
+      alert(`La densidad debe estar entre ${MIN_DENSITY} y ${MAX_DENSITY} aves por jaula.`);
+      return;
+    }
+
+    if (okBarnAvailability && qty > okBarnAvailability.barn_balance_available) {
+      alert(
+        `Saldo insuficiente en ${okFarmCode} ${okBarnCode}: ` +
+        `${okBarnAvailability.barn_balance_available.toLocaleString()} disponibles vs ${qty.toLocaleString()} solicitadas. ` +
+        'Ajusta la cantidad o selecciona otro galpón.'
+      );
+      return;
     }
 
     setIsSubmitting(true);
@@ -1050,32 +1212,19 @@ export const ComercialPage: React.FC = () => {
       farm_code: okFarmCode,
       barn_code: okBarnCode,
       allocated_quantity: qty,
+      density_birds_per_cage: densityNum,
       observation: okObservation.trim() || undefined,
     };
 
     try {
-      let updatedOrder: SalesOrder;
-      try {
-        updatedOrder = await apiClient<SalesOrder>(`/comercial/orders/${selectedOrderForAction.id}/dar-ok`, {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-      } catch {
-        // Fallback local
-        updatedOrder = {
-          ...selectedOrderForAction,
-          status: 'APROBADO_RESERVADO',
-          assigned_farm_code: okFarmCode,
-          assigned_barn_code: okBarnCode,
-          allocated_quantity: qty,
-          gestor_username: user?.username || 'gestor_comercial',
-          gestor_observation: okObservation || 'Aprobación formal otorgada por Gestor Comercial. Reserva de aves confirmada.',
-          updated_at: new Date().toISOString(),
-        };
-      }
+      // El backend valida y descuenta el saldo; sin respaldo local
+      const updatedOrder = await apiClient<SalesOrder>(`/comercial/orders/${selectedOrderForAction.id}/dar-ok`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
 
-      // Descontar y reservar aves en el inventario biológico de Pecuaria en tiempo real
-      reserveBarnStock(okFarmCode, okBarnCode, qty);
+      // El saldo lo descuenta el backend; refrescamos la disponibilidad real
+      loadInitialData();
 
       const updatedList = orders.map((o) => (o.id === updatedOrder.id ? updatedOrder : o));
       setOrders(updatedList);
@@ -1151,13 +1300,10 @@ export const ComercialPage: React.FC = () => {
         };
       }
 
-      // Si el pedido estaba aprobado con reserva, liberar las aves de vuelta a Pecuaria
+      // El backend libera la reserva al cancelar; refrescamos la disponibilidad real
       if (order.status === 'APROBADO_RESERVADO') {
-        const farmToRelease = order.assigned_farm_code || order.suggested_farm_code || 'TRAD1';
-        const barnToRelease = order.assigned_barn_code || order.suggested_barn_code || 'G-01';
-        const qtyToRelease = order.allocated_quantity || order.requested_quantity;
-        releaseBarnStock(farmToRelease, barnToRelease, qtyToRelease);
-        showToast(`Pedido [${order.order_number}] cancelado. Se liberaron ${qtyToRelease.toLocaleString()} aves de vuelta al saldo disponible.`);
+        loadInitialData();
+        showToast(`Pedido [${order.order_number}] cancelado. Se liberó la reserva en el galpón.`);
       } else {
         showToast(`Pedido [${order.order_number}] cancelado.`);
       }
@@ -1170,11 +1316,19 @@ export const ComercialPage: React.FC = () => {
     }
   };
 
+  // Pedidos con transporte asignado: base de la pestaña "Mis Transportes"
+  const transportOrders = useMemo(
+    () => orders.filter((o) => o.transport_assigned && o.status !== 'CANCELADO'),
+    [orders]
+  );
+
   // Filtrado de pedidos para la pestaña Programación
   const filteredOrders = useMemo(() => {
     return orders.filter((o) => {
       if (statusFilter !== 'ALL' && o.status !== statusFilter) return false;
       if (zoneFilter !== 'ALL' && o.zone_code !== zoneFilter) return false;
+      // Filtro por fecha (saca o registro) según el criterio elegido
+      if (!matchesRange(orderDateKey(o, dateFilter.criterion), dateRange)) return false;
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const matchNum = o.order_number.toLowerCase().includes(q);
@@ -1185,7 +1339,7 @@ export const ComercialPage: React.FC = () => {
       }
       return true;
     });
-  }, [orders, statusFilter, zoneFilter, searchQuery]);
+  }, [orders, statusFilter, zoneFilter, searchQuery, dateFilter.criterion, dateRange]);
 
   // Filtrado de galpones para la pestaña Stock Disponible de Pecuaria
   const filteredPecuariaItems = useMemo(() => {
@@ -1278,17 +1432,45 @@ export const ComercialPage: React.FC = () => {
           <span>📅 Programación de Pedidos ({orders.length})</span>
         </button>
 
+        {canCreateOrders && (
+          <button
+            type="button"
+            onClick={() => setActiveTab('nuevo_pedido')}
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
+              activeTab === 'nuevo_pedido'
+                ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
+                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
+            }`}
+          >
+            <PlusCircle className="w-4 h-4" />
+            <span>➕ Nuevo Pedido de Venta</span>
+          </button>
+        )}
+
         <button
           type="button"
-          onClick={() => setActiveTab('nuevo_pedido')}
+          onClick={() => setActiveTab('clientes')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'nuevo_pedido'
+            activeTab === 'clientes'
               ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
               : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
           }`}
         >
-          <PlusCircle className="w-4 h-4" />
-          <span>➕ Nuevo Pedido de Venta</span>
+          <Building2 className="w-4 h-4" />
+          <span>🏢 Clientes ({clients.length})</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('monitoreo')}
+          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
+            activeTab === 'monitoreo'
+              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
+              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <MapPin className="w-4 h-4" />
+          <span>🚚 Mis Transportes ({transportOrders.length})</span>
         </button>
 
         <button
@@ -1376,7 +1558,10 @@ export const ComercialPage: React.FC = () => {
               />
             </div>
 
-            <div className="flex items-center gap-2 w-full sm:w-auto">
+            <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+              {/* Filtro por fecha (saca / registro) */}
+              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
+
               {/* Filtro Estado */}
               <select
                 value={statusFilter}
@@ -1404,13 +1589,14 @@ export const ComercialPage: React.FC = () => {
                 <option value="SUR">Sur</option>
               </select>
 
-              {(searchQuery || statusFilter !== 'ALL' || zoneFilter !== 'ALL') && (
+              {(searchQuery || statusFilter !== 'ALL' || zoneFilter !== 'ALL' || dateFilter.preset !== 'ALL') && (
                 <button
                   type="button"
                   onClick={() => {
                     setSearchQuery('');
                     setStatusFilter('ALL');
                     setZoneFilter('ALL');
+                    setDateFilter(DEFAULT_DATE_FILTER);
                   }}
                   className="px-2.5 py-2 text-xs text-red-600 hover:bg-red-50 dark:hover:bg-red-950/40 rounded-xl font-bold transition-colors"
                   title="Limpiar filtros"
@@ -1460,7 +1646,16 @@ export const ComercialPage: React.FC = () => {
                     <tr>
                       <td colSpan={9} className="py-12 text-center text-slate-500">
                         <ShoppingCart className="w-8 h-8 mx-auto mb-2 text-slate-400" />
-                        <div className="font-bold">No se encontraron pedidos con los filtros aplicados</div>
+                        <div className="font-bold">
+                          {orders.length === 0
+                            ? 'Aún no hay pedidos registrados'
+                            : 'No se encontraron pedidos con los filtros aplicados'}
+                        </div>
+                        {orders.length === 0 && (
+                          <div className="text-[11px] mt-1 text-slate-400">
+                            Registre el primer pedido desde la pestaña "Nuevo Pedido de Venta".
+                          </div>
+                        )}
                       </td>
                     </tr>
                   ) : (
@@ -1468,7 +1663,7 @@ export const ComercialPage: React.FC = () => {
                       const isPendingOk = order.status === 'REGISTRADO';
                       const isApproved = order.status === 'APROBADO_RESERVADO';
                       const isObserved = order.status === 'CON_OBSERVACION';
-                      const estCages = order.estimated_cages || Math.ceil(order.requested_quantity / 8);
+                      const estCages = order.estimated_cages || computeCages(order.requested_quantity, order.density_birds_per_cage);
                       const estTons = order.estimated_total_kg
                         ? Math.round(order.estimated_total_kg / 100) / 10
                         : Math.round((order.requested_quantity * ((order.min_weight_kg + order.max_weight_kg) / 2)) / 1000 * 10) / 10;
@@ -1604,6 +1799,18 @@ export const ComercialPage: React.FC = () => {
                               >
                                 <Eye className="w-4 h-4" />
                               </button>
+
+                              {/* Seguimiento de la ruta del transporte (solo con transporte asignado) */}
+                              {order.transport_assigned && (
+                                <button
+                                  type="button"
+                                  onClick={() => setTrackingOrder(order)}
+                                  className="p-1.5 rounded-lg text-blue-600 hover:text-blue-800 hover:bg-blue-50 dark:hover:bg-blue-950/40 transition-colors"
+                                  title="Ver la ruta del transporte de este pedido"
+                                >
+                                  <Truck className="w-4 h-4" />
+                                </button>
+                              )}
 
                               {/* ACCIONES EXCLUSIVAS DEL GESTOR COMERCIAL */}
                               {isGestorOrAdmin && isPendingOk && (
@@ -1795,9 +2002,21 @@ export const ComercialPage: React.FC = () => {
                   <MapPin className="w-4 h-4 text-red-600" />
                   <span>Punto de Entrega & Coordenadas Satelitales (Descarga) *</span>
                 </label>
-                <span className="text-[10px] font-bold text-slate-400">
-                  Destino físico del camión
-                </span>
+                {selectedClientData ? (
+                  <button
+                    type="button"
+                    onClick={() => applyClientDeliveryData(selectedClientData)}
+                    className="text-[10px] font-bold text-blue-700 dark:text-blue-400 hover:underline inline-flex items-center gap-1"
+                    title="Restaurar la dirección y coordenadas registradas en la ficha del cliente"
+                  >
+                    <RotateCcw className="w-3 h-3" />
+                    <span>Usar datos del cliente</span>
+                  </button>
+                ) : (
+                  <span className="text-[10px] font-bold text-slate-400">
+                    Destino físico del camión
+                  </span>
+                )}
               </div>
 
               <div>
@@ -1859,6 +2078,17 @@ export const ComercialPage: React.FC = () => {
                   />
                 </div>
               </div>
+
+              {selectedClientData &&
+                (selectedClientData.latitude === null ||
+                  selectedClientData.latitude === undefined ||
+                  selectedClientData.longitude === null ||
+                  selectedClientData.longitude === undefined) && (
+                  <p className="text-[10px] font-bold text-amber-600 dark:text-amber-400 leading-relaxed">
+                    El cliente "{selectedClientData.business_name}" no tiene coordenadas registradas. Ingréselas aquí para este pedido
+                    o actualice su ficha en la pestaña Clientes.
+                  </p>
+                )}
 
               {deliveryLat && deliveryLng && (
                 <div className="flex items-center justify-between text-xs font-semibold text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-950/40 p-2.5 rounded-xl border border-emerald-200 dark:border-emerald-800">
@@ -2000,6 +2230,57 @@ export const ComercialPage: React.FC = () => {
               </p>
             </div>
 
+            {/* 4.1 Densidad de Carga (aves por jaula) */}
+            <div className="p-4 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2">
+              <div className="flex items-center justify-between">
+                <label className="block text-xs font-extrabold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
+                  🐔 Densidad de Carga (aves por jaula) *
+                </label>
+                <span className="text-[10px] font-bold text-slate-500 dark:text-slate-400">
+                  Sugerida según el peso
+                </span>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-start">
+                <div>
+                  <Input
+                    type="number"
+                    min={MIN_DENSITY}
+                    max={MAX_DENSITY}
+                    step="1"
+                    value={densityStr}
+                    onChange={(e) => {
+                      setDensityStr(e.target.value);
+                      setDensityTouched(true);
+                    }}
+                    className="text-sm font-mono font-black"
+                    required
+                  />
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                    Rango operativo {MIN_DENSITY} a {MAX_DENSITY} aves/jaula.
+                  </p>
+                </div>
+
+                <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-center">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Jaulas Estimadas</span>
+                  <span className="text-sm font-mono font-black text-red-600 dark:text-red-400">
+                    {logisticsCalculation.cagesNeeded.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="p-2.5 bg-white dark:bg-slate-900 rounded-xl border border-slate-200 dark:border-slate-800 text-center">
+                  <span className="text-[10px] font-bold uppercase text-slate-500 block">Peso por Jaula</span>
+                  <span className="text-sm font-mono font-black text-slate-900 dark:text-slate-100">
+                    {logisticsCalculation.kgPerCage.toFixed(2)} kg
+                  </span>
+                </div>
+              </div>
+
+              <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                La densidad define las jaulas, el cubicaje y los camiones del pedido. El Gestor Comercial puede ajustarla al aprobar.
+              </p>
+            </div>
+
             {/* Estimación Logística y Tonelaje en Tiempo Real */}
             <div className="p-4 bg-slate-100/80 dark:bg-slate-800/90 rounded-2xl border border-slate-200 dark:border-slate-700 shadow-2xs space-y-3">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1">
@@ -2008,7 +2289,7 @@ export const ComercialPage: React.FC = () => {
                   <span>Estimación Logística &amp; Tonelaje de Despacho</span>
                 </span>
                 <span className="text-[10px] font-bold text-slate-600 dark:text-slate-400">
-                  Estándar: 8 aves / jaula transportadora
+                  Densidad: {logisticsCalculation.density} aves / jaula
                 </span>
               </div>
 
@@ -2056,6 +2337,9 @@ export const ComercialPage: React.FC = () => {
                 max_weight: parseFloat(maxWeightStr) || 2.45,
                 zone_code: zoneCode,
                 scheduled_date: targetDeliveryDate,
+                delivery_address: deliveryAddress.trim() || undefined,
+                delivery_latitude: deliveryLat ? parseFloat(deliveryLat) : null,
+                delivery_longitude: deliveryLng ? parseFloat(deliveryLng) : null,
               }}
               currentFarmCode={suggestedFarmCode}
               currentBarnCode={suggestedBarnCode}
@@ -2228,6 +2512,198 @@ export const ComercialPage: React.FC = () => {
               <span>Enviar Pedido a Programación (Solicitar Aprobación)</span>
             </Button>
           </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PESTAÑA: CATÁLOGO DE CLIENTES (FICHA, DIRECCIÓN Y COORDENADAS)            */}
+      {/* ========================================================================= */}
+      {activeTab === 'clientes' && (
+        <div className="space-y-4">
+          {/* Barra de búsqueda y alta de cliente */}
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-center justify-between gap-3">
+            <div className="relative flex-1 w-full">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+              <input
+                type="text"
+                placeholder="Buscar por razón social, RUC, zona o dirección..."
+                value={clientListSearch}
+                onChange={(e) => setClientListSearch(e.target.value)}
+                className="w-full pl-9 pr-4 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-red-600"
+              />
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleOpenNewClientModal}
+              className="bg-red-600 hover:bg-red-700 text-white font-extrabold text-xs px-3 py-2 rounded-xl flex items-center gap-1.5 shadow-xs whitespace-nowrap"
+            >
+              <PlusCircle className="w-4 h-4" />
+              <span>Registrar Cliente</span>
+            </Button>
+          </div>
+
+          {/* Tabla del catálogo de clientes */}
+          <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-100 dark:bg-slate-900/90 text-slate-950 dark:text-slate-100 text-[11px] font-black uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
+                    <th className="py-3 px-4">Cliente</th>
+                    <th className="py-3 px-4 whitespace-nowrap">RUC / DNI</th>
+                    <th className="py-3 px-4 text-center whitespace-nowrap">Zona</th>
+                    <th className="py-3 px-4">Dirección de Entrega</th>
+                    <th className="py-3 px-4 text-center whitespace-nowrap">Coordenadas</th>
+                    <th className="py-3 px-4 text-center whitespace-nowrap">Pesos Pref.</th>
+                    <th className="py-3 px-4 text-center whitespace-nowrap">Estado</th>
+                    <th className="py-3 px-4 text-center whitespace-nowrap">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800/80">
+                  {filteredClients.length === 0 ? (
+                    <tr>
+                      <td colSpan={8} className="py-12 text-center text-slate-500">
+                        <Building2 className="w-8 h-8 mx-auto mb-2 text-slate-400" />
+                        <div className="font-bold">No se encontraron clientes con ese criterio</div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredClients.map((client) => {
+                      const hasCoords =
+                        client.latitude !== null &&
+                        client.latitude !== undefined &&
+                        client.longitude !== null &&
+                        client.longitude !== undefined;
+                      return (
+                        <tr key={client.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition-colors">
+                          <td className="py-3 px-4">
+                            <div className="font-bold text-slate-950 dark:text-white">{client.business_name}</div>
+                            <div className="text-[11px] text-slate-500 dark:text-slate-400">{client.contact_phone || 'Sin teléfono'}</div>
+                          </td>
+
+                          <td className="py-3 px-4 font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                            {client.tax_id}
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <span className="inline-block px-2 py-0.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-[10px] font-black text-slate-700 dark:text-slate-300">
+                              {client.zone_code}
+                            </span>
+                          </td>
+
+                          <td className="py-3 px-4 text-slate-700 dark:text-slate-300 max-w-[280px]">
+                            <span className="line-clamp-2">{client.address || '—'}</span>
+                          </td>
+
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {hasCoords ? (
+                              <a
+                                href={`https://www.google.com/maps?q=${client.latitude},${client.longitude}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-[10.5px] font-mono font-bold text-emerald-700 dark:text-emerald-400 hover:underline inline-flex items-center gap-1"
+                                title="Ver punto de entrega en Google Maps"
+                              >
+                                <MapPin className="w-3 h-3" />
+                                <span>{Number(client.latitude).toFixed(5)}, {Number(client.longitude).toFixed(5)}</span>
+                              </a>
+                            ) : (
+                              <span className="text-[10.5px] font-bold text-amber-600 dark:text-amber-400" title="Sin coordenadas: el pedido no podrá autocompletar el punto de entrega">
+                                Sin coordenadas
+                              </span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-center font-mono font-bold text-slate-900 dark:text-slate-100 whitespace-nowrap">
+                            {client.preferred_min_weight != null && client.preferred_max_weight != null
+                              ? `${Number(client.preferred_min_weight).toFixed(2)} - ${Number(client.preferred_max_weight).toFixed(2)} kg`
+                              : '—'}
+                          </td>
+
+                          <td className="py-3 px-4 text-center whitespace-nowrap">
+                            {client.is_active ? (
+                              <span className="text-emerald-600 dark:text-emerald-400 font-bold">Activo</span>
+                            ) : (
+                              <span className="text-slate-500 dark:text-slate-400 font-bold">Inactivo</span>
+                            )}
+                          </td>
+
+                          <td className="py-3 px-4 text-center">
+                            <div className="flex items-center justify-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditClient(client)}
+                                className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                title="Editar ficha del cliente"
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </button>
+                              {hasCoords && (
+                                <a
+                                  href={`https://www.google.com/maps?q=${client.latitude},${client.longitude}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="p-1.5 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                                  title="Abrir punto de entrega en Google Maps"
+                                >
+                                  <ExternalLink className="w-4 h-4" />
+                                </a>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 font-medium px-1">
+            Las coordenadas registradas aquí se cargan automáticamente como punto de entrega al seleccionar el cliente en un pedido.
+          </p>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* PESTAÑA: MIS TRANSPORTES (SEGUIMIENTO DE RUTA DEL VENDEDOR)               */}
+      {/* ========================================================================= */}
+      {activeTab === 'monitoreo' && (
+        <div className="space-y-4">
+          <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+            <div>
+              <h3 className="text-sm font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                <MapPin className="w-4 h-4 text-red-600" />
+                Monitoreo de Transportes
+              </h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                Ruta de las unidades asignadas a {isGestorOrAdmin ? 'los pedidos aprobados' : 'tus pedidos aprobados'}.
+              </p>
+            </div>
+            <span className="text-[11px] font-black px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+              {transportOrders.length} unidad{transportOrders.length !== 1 ? 'es' : ''} en ruta
+            </span>
+          </div>
+
+          {transportOrders.length === 0 ? (
+            <div className="bg-white dark:bg-slate-900 p-10 rounded-2xl border border-slate-200 dark:border-slate-800 text-center">
+              <Truck className="w-9 h-9 mx-auto mb-2 text-slate-400" />
+              <div className="font-bold text-slate-700 dark:text-slate-200">Aún no hay transportes en ruta</div>
+              <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                Cuando el Gestor Comercial apruebe uno de los pedidos y le asigne una unidad, su ruta aparecerá aquí.
+              </p>
+              <Button
+                size="sm"
+                className="mt-4 bg-red-600 hover:bg-red-700 text-white font-bold"
+                onClick={() => setActiveTab('programacion')}
+              >
+                Ver mis pedidos
+              </Button>
+            </div>
+          ) : (
+            <FlotaGpsMap readOnly orders={transportOrders} showSellerFilter={isGestorOrAdmin} />
+          )}
         </div>
       )}
 
@@ -2473,7 +2949,8 @@ export const ComercialPage: React.FC = () => {
                   {selectedOrderForAction.requested_quantity.toLocaleString()} aves
                 </span>
                 <span className="text-[10px] text-slate-500 block">
-                  ~{Math.ceil(selectedOrderForAction.requested_quantity / 8)} jaulas
+                  ~{computeCages(selectedOrderForAction.requested_quantity, selectedOrderForAction.density_birds_per_cage)} jaulas
+                  {' '}a {selectedOrderForAction.density_birds_per_cage || DEFAULT_DENSITY} aves/jaula
                 </span>
               </div>
               <div>
@@ -2539,6 +3016,25 @@ export const ComercialPage: React.FC = () => {
                   className="text-xs font-mono font-bold"
                 />
               </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-1">
+                  Densidad (Aves / Jaula) *
+                </label>
+                <Input
+                  type="number"
+                  min={MIN_DENSITY}
+                  max={MAX_DENSITY}
+                  step="1"
+                  value={okDensityStr}
+                  onChange={(e) => setOkDensityStr(e.target.value)}
+                  className="text-xs font-mono font-bold"
+                />
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
+                  {computeCages(parseInt(okAllocatedQtyStr, 10) || 0, parseInt(okDensityStr, 10)).toLocaleString()} jaulas
+                  {' '}• rango {MIN_DENSITY}-{MAX_DENSITY}
+                </p>
+              </div>
             </div>
 
             {/* Live Stock del Galpón en el Modal Dar OK */}
@@ -2564,20 +3060,22 @@ export const ComercialPage: React.FC = () => {
 
                 {/* Advertencia si la cantidad a reservar supera el saldo disponible */}
                 {(parseInt(okAllocatedQtyStr, 10) || 0) > okBarnAvailability.barn_balance_available && (
-                  <div className="p-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 text-xs">
-                    <span className="text-rose-900 dark:text-rose-200 font-bold flex items-center gap-1.5">
-                      <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
-                      Cantidad a reservar ({(parseInt(okAllocatedQtyStr, 10) || 0).toLocaleString()} aves) excede el saldo disponible ({okBarnAvailability.barn_balance_available.toLocaleString()} aves).
-                    </span>
-                    {okBarnAvailability.barn_balance_available > 0 && (
-                      <button
-                        type="button"
-                        onClick={() => setOkAllocatedQtyStr(String(okBarnAvailability.barn_balance_available))}
-                        className="px-2 py-0.5 text-[10px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-md whitespace-nowrap shadow-xs"
-                      >
-                        Ajustar a {okBarnAvailability.barn_balance_available.toLocaleString()} aves
-                      </button>
-                    )}
+                  <div className="p-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-lg flex flex-col gap-1.5 text-xs">
+                    <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2">
+                      <span className="text-rose-900 dark:text-rose-200 font-bold flex items-center gap-1.5">
+                        <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />
+                        Cantidad a reservar ({(parseInt(okAllocatedQtyStr, 10) || 0).toLocaleString()} aves) excede el saldo disponible ({okBarnAvailability.barn_balance_available.toLocaleString()} aves).
+                      </span>
+                      {okBarnAvailability.barn_balance_available > 0 && (
+                        <button
+                          type="button"
+                          onClick={() => setOkAllocatedQtyStr(String(okBarnAvailability.barn_balance_available))}
+                          className="px-2 py-0.5 text-[10px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-md whitespace-nowrap shadow-xs"
+                        >
+                          Ajustar a {okBarnAvailability.barn_balance_available.toLocaleString()} aves
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -2680,12 +3178,32 @@ export const ComercialPage: React.FC = () => {
           size="md"
         >
           <div className="space-y-3.5 text-xs">
-            <div className="flex items-center justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
-              <span className="font-extrabold text-slate-950 dark:text-white text-sm">
-                {selectedOrderForAction.client_name}
-              </span>
-              <span className="font-mono font-bold text-slate-600 dark:text-slate-400">
-                {selectedOrderForAction.client_tax_id || 'Sin RUC'}
+            <div className="flex items-start justify-between pb-2 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <span className="font-extrabold text-slate-950 dark:text-white text-sm block">
+                  {selectedOrderForAction.client_name}
+                </span>
+                <span className="font-mono font-bold text-[10.5px] text-slate-500 dark:text-slate-400">
+                  RUC: {selectedOrderForAction.client_tax_id || 'No registrado'}
+                </span>
+              </div>
+              <span
+                className={`px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider ${
+                  selectedOrderForAction.status === 'APROBADO_RESERVADO'
+                    ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                    : selectedOrderForAction.status === 'CON_OBSERVACION'
+                    ? 'bg-rose-100 text-rose-800 dark:bg-rose-950 dark:text-rose-300'
+                    : selectedOrderForAction.status === 'CANCELADO'
+                    ? 'bg-slate-200 text-slate-700 dark:bg-slate-800 dark:text-slate-300'
+                    : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                }`}
+              >
+                {selectedOrderForAction.status === 'APROBADO_RESERVADO' && 'Aprobado'}
+                {selectedOrderForAction.status === 'CON_OBSERVACION' && 'Observado'}
+                {selectedOrderForAction.status === 'CANCELADO' && 'Cancelado'}
+                {selectedOrderForAction.status === 'REGISTRADO' && 'Por aprobar'}
+                {selectedOrderForAction.status === 'BORRADOR' && 'Borrador'}
+                {selectedOrderForAction.status === 'DESPACHADO' && 'Despachado'}
               </span>
             </div>
 
@@ -2693,10 +3211,7 @@ export const ComercialPage: React.FC = () => {
               <div>
                 <span className="text-slate-500 block">Vendedor Comercial:</span>
                 <span className="font-bold text-slate-900 dark:text-slate-100">
-                  {selectedOrderForAction.seller_full_name || (selectedOrderForAction.seller_username === 'areacomercial1' ? 'Felipe' : selectedOrderForAction.seller_username === 'vendedor2' ? 'María Elena Rodríguez Soto' : 'Juan Carlos Pérez Gálvez')}
-                </span>
-                <span className="text-[10px] text-slate-400 block font-normal">
-                  Ejecutivo Comercial de Ventas
+                  {selectedOrderForAction.seller_full_name || selectedOrderForAction.seller_username || 'No registrado'}
                 </span>
               </div>
               <div>
@@ -2720,17 +3235,25 @@ export const ComercialPage: React.FC = () => {
                 <span className="font-mono font-black text-slate-950 dark:text-white">
                   {selectedOrderForAction.requested_quantity.toLocaleString()} aves
                 </span>
-              </div>
-              <div>
-                <span className="text-slate-500 block">Logística &amp; Jaulas:</span>
-                <span className="font-mono font-bold text-slate-800 dark:text-slate-200">
-                  ~{selectedOrderForAction.estimated_cages || Math.ceil(selectedOrderForAction.requested_quantity / 8)} jaulas ({selectedOrderForAction.estimated_total_kg ? `${Math.round(selectedOrderForAction.estimated_total_kg / 100) / 10} Ton` : `${Math.round((selectedOrderForAction.requested_quantity * ((selectedOrderForAction.min_weight_kg + selectedOrderForAction.max_weight_kg) / 2)) / 1000 * 10) / 10} Ton`})
-                </span>
+                {selectedOrderForAction.allocated_quantity > 0 && (
+                  <span className="text-[10px] text-emerald-600 block">
+                    Asignadas: {selectedOrderForAction.allocated_quantity.toLocaleString()}
+                  </span>
+                )}
               </div>
               <div>
                 <span className="text-slate-500 block">Rango de Peso:</span>
                 <span className="font-mono font-bold">
                   {selectedOrderForAction.min_weight_kg.toFixed(2)} - {selectedOrderForAction.max_weight_kg.toFixed(2)} kg
+                </span>
+              </div>
+              <div>
+                <span className="text-slate-500 block">Densidad de Carga:</span>
+                <span className="font-mono font-bold">
+                  {selectedOrderForAction.density_birds_per_cage || DEFAULT_DENSITY} aves/jaula
+                </span>
+                <span className="text-[10px] text-slate-400 block">
+                  ~{selectedOrderForAction.estimated_cages || computeCages(selectedOrderForAction.requested_quantity, selectedOrderForAction.density_birds_per_cage)} jaulas
                 </span>
               </div>
               <div>
@@ -2742,6 +3265,39 @@ export const ComercialPage: React.FC = () => {
                 </span>
               </div>
             </div>
+
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/60 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="text-slate-500 block font-bold mb-0.5">Punto de Entrega</span>
+              <p className="text-slate-800 dark:text-slate-200">
+                {selectedOrderForAction.delivery_address || 'No registrado'}
+              </p>
+              {selectedOrderForAction.delivery_latitude != null && selectedOrderForAction.delivery_longitude != null && (
+                <a
+                  href={`https://www.google.com/maps?q=${selectedOrderForAction.delivery_latitude},${selectedOrderForAction.delivery_longitude}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[10.5px] font-bold text-blue-700 dark:text-blue-400 hover:underline mt-1"
+                >
+                  <MapPin className="w-3 h-3" />
+                  Ver en Google Maps
+                </a>
+              )}
+            </div>
+
+            {selectedOrderForAction.transport_assigned && (
+              <div className="p-3 bg-blue-50 dark:bg-blue-950/30 rounded-xl border border-blue-200 dark:border-blue-900">
+                <span className="text-blue-900 dark:text-blue-300 block font-bold mb-0.5">Transporte Asignado</span>
+                <p className="text-slate-800 dark:text-slate-200">
+                  {selectedOrderForAction.transport_plate || 'Sin placa'}
+                  {selectedOrderForAction.transport_driver_name ? ` · ${selectedOrderForAction.transport_driver_name}` : ''}
+                </p>
+                {selectedOrderForAction.loading_slot_time && (
+                  <p className="text-[10.5px] font-mono text-blue-700 dark:text-blue-300">
+                    Ventana de carga: {selectedOrderForAction.loading_slot_time}
+                  </p>
+                )}
+              </div>
+            )}
 
             {selectedOrderForAction.gestor_observation && (
               <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl space-y-1">
@@ -2858,7 +3414,7 @@ export const ComercialPage: React.FC = () => {
                     className="text-xs"
                   />
                   <p className="text-[10px] text-slate-400 mt-1">
-                    Dirección fiscal o legal de la empresa. El punto de descarga se especificará al capturar cada pedido.
+                    Dirección del punto de entrega habitual. Se autocompletará al elegir el cliente en un pedido.
                   </p>
                 </div>
 
@@ -2874,6 +3430,44 @@ export const ComercialPage: React.FC = () => {
                     className="text-xs"
                   />
                 </div>
+              </div>
+
+              {/* Coordenadas satelitales del punto de entrega (opcional, autocompletan el pedido) */}
+              <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+                <div className="flex items-start justify-between gap-2 mb-2">
+                  <span className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                    Coordenadas Satelitales del Punto de Entrega
+                  </span>
+                  <span className="text-[10px] font-bold text-slate-400">Opcional</span>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-0.5">Latitud (WGS84)</label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="Ej: -12.046374"
+                      value={newClientLat}
+                      onChange={(e) => setNewClientLat(e.target.value)}
+                      className="text-xs font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] text-slate-500 mb-0.5">Longitud (WGS84)</label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="Ej: -77.042793"
+                      value={newClientLng}
+                      onChange={(e) => setNewClientLng(e.target.value)}
+                      className="text-xs font-mono"
+                    />
+                  </div>
+                </div>
+                <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                  Recomendado: regístrelas ahora para que cada pedido de este cliente cargue solo su punto de entrega.
+                  En Google Maps: clic derecho sobre el punto → copiar coordenadas.
+                </p>
               </div>
 
               {/* Rango de peso habitual del cliente (opcional) */}
@@ -2937,6 +3531,235 @@ export const ComercialPage: React.FC = () => {
               </Button>
             </div>
           </form>
+        </Modal>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: EDITAR FICHA DE CLIENTE (INCLUYE DIRECCIÓN Y COORDENADAS)           */}
+      {/* ========================================================================= */}
+      {editClientModalOpen && (
+        <Modal
+          isOpen={editClientModalOpen}
+          onClose={() => setEditClientModalOpen(false)}
+          title="Editar Ficha del Cliente"
+          description="Actualice los datos, la dirección y las coordenadas del punto de entrega."
+          size="md"
+        >
+          <form onSubmit={handleSaveEditClient} className="space-y-4 text-xs">
+            {editClientError && (
+              <div className="p-3 bg-red-50 dark:bg-red-950/40 border border-red-300 dark:border-red-900 rounded-xl text-red-700 dark:text-red-300 font-bold flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+                <span>{editClientError}</span>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                Razón Social o Nombre Comercial *
+              </label>
+              <Input
+                type="text"
+                value={editClientForm.business_name}
+                onChange={(e) => setEditClientForm((f) => ({ ...f, business_name: e.target.value }))}
+                className="text-xs"
+                required
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  RUC / Documento Tributario *
+                </label>
+                <Input
+                  type="text"
+                  value={editClientForm.tax_id}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, tax_id: e.target.value }))}
+                  className="text-xs font-mono"
+                  required
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Zona de Entrega Comercial *
+                </label>
+                <select
+                  value={editClientForm.zone_code}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, zone_code: e.target.value }))}
+                  className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-red-600"
+                >
+                  <option value="METROPOLITANA">Metropolitana (Lima)</option>
+                  <option value="NORTE">Zona Norte</option>
+                  <option value="CENTRO">Zona Centro</option>
+                  <option value="SUR">Zona Sur</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Dirección de Entrega
+                </label>
+                <Input
+                  type="text"
+                  value={editClientForm.address}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, address: e.target.value }))}
+                  className="text-xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 mb-1">
+                  Teléfono de Contacto
+                </label>
+                <Input
+                  type="text"
+                  value={editClientForm.contact_phone}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, contact_phone: e.target.value }))}
+                  className="text-xs"
+                />
+              </div>
+            </div>
+
+            {/* Coordenadas del punto de entrega */}
+            <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
+              <span className="block text-[11px] font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-2">
+                Coordenadas Satelitales del Punto de Entrega
+              </span>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">Latitud (WGS84)</label>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="Ej: -12.046374"
+                    value={editClientForm.latitude}
+                    onChange={(e) => setEditClientForm((f) => ({ ...f, latitude: e.target.value }))}
+                    className="text-xs font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="block text-[10px] text-slate-500 mb-0.5">Longitud (WGS84)</label>
+                  <Input
+                    type="number"
+                    step="any"
+                    placeholder="Ej: -77.042793"
+                    value={editClientForm.longitude}
+                    onChange={(e) => setEditClientForm((f) => ({ ...f, longitude: e.target.value }))}
+                    className="text-xs font-mono"
+                  />
+                </div>
+              </div>
+              <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-2 leading-relaxed">
+                Deje ambos campos vacíos si el cliente aún no tiene un punto de entrega fijo.
+              </p>
+            </div>
+
+            {/* Pesos preferentes y estado */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 items-end">
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">Peso Mín (kg)</label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="1.0"
+                  max="4.0"
+                  value={editClientForm.min_weight}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, min_weight: e.target.value }))}
+                  className="text-xs"
+                />
+              </div>
+              <div>
+                <label className="block text-[10px] text-slate-500 mb-0.5">Peso Máx (kg)</label>
+                <Input
+                  type="number"
+                  step="0.05"
+                  min="1.0"
+                  max="4.0"
+                  value={editClientForm.max_weight}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, max_weight: e.target.value }))}
+                  className="text-xs"
+                />
+              </div>
+              <label className="flex items-center gap-2 pb-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={editClientForm.is_active}
+                  onChange={(e) => setEditClientForm((f) => ({ ...f, is_active: e.target.checked }))}
+                  className="w-4 h-4 accent-red-600"
+                />
+                <span className="text-[11px] font-bold text-slate-700 dark:text-slate-300">Cliente activo</span>
+              </label>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setEditClientModalOpen(false)}
+                disabled={isSavingClientEdit}
+              >
+                Cancelar
+              </Button>
+              <Button
+                type="submit"
+                size="sm"
+                className="bg-red-600 hover:bg-red-700 text-white font-bold"
+                disabled={isSavingClientEdit}
+              >
+                {isSavingClientEdit ? 'Guardando...' : 'Guardar Cambios'}
+              </Button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: SEGUIMIENTO DE RUTA DEL TRANSPORTE (VENDEDOR, SOLO LECTURA)        */}
+      {/* ========================================================================= */}
+      {trackingOrder && (
+        <Modal
+          isOpen={!!trackingOrder}
+          onClose={() => setTrackingOrder(null)}
+          title={`Seguimiento de Ruta — ${trackingOrder.order_number}`}
+          description={`${trackingOrder.client_name} • ${trackingOrder.assigned_farm_code || 'Granja'} ${trackingOrder.assigned_barn_code || ''}`}
+          size="2xl"
+        >
+          <div className="space-y-3">
+            <div className="flex flex-wrap items-center gap-3 text-xs">
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100 dark:bg-slate-800 font-bold text-slate-700 dark:text-slate-200">
+                <Truck className="w-3.5 h-3.5" />
+                {trackingOrder.transport_plate || 'Sin placa'}
+              </span>
+              {trackingOrder.transport_driver_name && (
+                <span className="text-slate-600 dark:text-slate-300">
+                  Chofer: <strong>{trackingOrder.transport_driver_name}</strong>
+                </span>
+              )}
+              {trackingOrder.transport_driver_phone && (
+                <span className="text-slate-600 dark:text-slate-300 font-mono">{trackingOrder.transport_driver_phone}</span>
+              )}
+              <span className="px-2.5 py-1 rounded-lg bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 font-bold">
+                {trackingOrder.dispatch_phase === 'EN_TRANSITO'
+                  ? 'En tránsito'
+                  : trackingOrder.dispatch_phase === 'EN_GRANJA_CARGANDO'
+                  ? 'Cargando en granja'
+                  : trackingOrder.dispatch_phase === 'ENTREGADO_CONFORME'
+                  ? 'Entregado'
+                  : 'Transporte asignado'}
+              </span>
+            </div>
+
+            <FlotaGpsMap
+              initialSelectedTruckId={
+                gpsSimulationStore.getTrucks().find((t) => t.orderId === trackingOrder.order_number)?.id
+              }
+              readOnly={true}
+            />
+          </div>
         </Modal>
       )}
 
@@ -3054,7 +3877,7 @@ export const ComercialPage: React.FC = () => {
                   <span className="text-lg font-black font-mono text-blue-700 dark:text-blue-400">
                     ~{transportSummary.totalCages.toLocaleString()}
                   </span>
-                  <span className="text-[10px] text-slate-400 block mt-0.5">Módulo ~8 aves / jaula</span>
+                  <span className="text-[10px] text-slate-400 block mt-0.5">Según densidad del pedido</span>
                 </div>
 
                 <div className="p-3 bg-slate-50 dark:bg-slate-800/50 rounded-xl border border-slate-200 dark:border-slate-700">
@@ -3094,7 +3917,7 @@ export const ComercialPage: React.FC = () => {
                     ) : (
                       transportFilteredOrders.map((o, idx) => {
                         const birds = o.allocated_quantity || o.requested_quantity || 0;
-                        const cages = o.estimated_cages || Math.ceil(birds / 8);
+                        const cages = o.estimated_cages || computeCages(birds, o.density_birds_per_cage);
                         const tons = o.estimated_total_kg
                           ? Math.round(o.estimated_total_kg / 100) / 10
                           : Math.round((birds * ((o.min_weight_kg + o.max_weight_kg) / 2)) / 1000 * 10) / 10;

@@ -1,6 +1,6 @@
 import React from 'react';
 import { Layers, AlertTriangle, CheckCircle2, Link2, Truck } from 'lucide-react';
-import { SalesOrder, TransportVehicle } from '@/types/comercial';
+import { SalesOrder, TransportVehicle, computeCages } from '@/types/comercial';
 
 interface ConsolidationCubicajeBarProps {
   currentOrder: SalesOrder;
@@ -17,7 +17,7 @@ export const ConsolidationCubicajeBar: React.FC<ConsolidationCubicajeBarProps> =
 
   // Jaulas del pedido actual
   const currentBirds = currentOrder.allocated_quantity || currentOrder.requested_quantity || 0;
-  const currentCages = currentOrder.estimated_cages || Math.ceil(currentBirds / 8);
+  const currentCages = currentOrder.estimated_cages || computeCages(currentBirds, currentOrder.density_birds_per_cage);
 
   // Otros pedidos ya asignados a este camión para la misma fecha
   const otherOrdersAssigned = allOrders.filter(
@@ -32,7 +32,7 @@ export const ConsolidationCubicajeBar: React.FC<ConsolidationCubicajeBarProps> =
   // Jaulas ya comprometidas en otros pedidos
   const existingCages = otherOrdersAssigned.reduce((sum, o) => {
     const b = o.allocated_quantity || o.requested_quantity || 0;
-    return sum + (o.estimated_cages || Math.ceil(b / 8));
+    return sum + (o.estimated_cages || computeCages(b, o.density_birds_per_cage));
   }, 0);
 
   const totalCages = existingCages + currentCages;

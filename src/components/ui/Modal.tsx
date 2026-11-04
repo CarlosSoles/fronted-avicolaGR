@@ -59,7 +59,8 @@ export const Modal: React.FC<ModalProps> = ({
       <div className="flex min-h-full items-center justify-center p-4">
         <div
           className={cn(
-            'relative w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-hidden transform transition-all text-slate-900 dark:text-slate-100',
+            'relative w-full bg-white dark:bg-slate-900 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800 overflow-x-hidden transform transition-all text-slate-900 dark:text-slate-100',
+            'max-h-[92vh] overflow-y-auto',
             maxWidths[actualSize] || 'max-w-lg'
           )}
           onClick={(e) => e.stopPropagation()}

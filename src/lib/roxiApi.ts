@@ -1,5 +1,5 @@
 import { apiClient } from './api';
-import { generateInitialOfficialData } from '@/types/pecuaria';
+import { FARM_COORDINATES, generateInitialOfficialData, haversineKm } from '@/types/pecuaria';
 
 export interface CandidateBarnEvaluation {
   farm_code: string;
@@ -45,14 +45,15 @@ export interface RoxiRecommendPayload {
   max_weight?: number;
   zone_code?: string;
   delivery_address?: string;
+  delivery_latitude?: number | null;
+  delivery_longitude?: number | null;
   scheduled_date?: string;
 }
 
 /**
- * Motor heurístico local de resiliencia de ROXI.
- * Se ejecuta si el backend en Render se encuentra en reposo (arranque en frío) o sin conexión,
- * garantizando que el usuario NUNCA vea un error 'Failed to fetch' y reciba una asignación
- * precisa basada en el inventario real de 23 granjas.
+ * Motor heurístico local de ROXI (solo si el backend no responde).
+ * Replica la misma prioridad del backend: edad > cercanía al punto de entrega > peso > saldo.
+ * Las distancias se calculan con las coordenadas reales de cada granja.
  */
 function computeLocalFallbackRecommendation(payload: RoxiRecommendPayload): RoxiAllocationResponse {
   const inventory = generateInitialOfficialData();
@@ -60,98 +61,110 @@ function computeLocalFallbackRecommendation(payload: RoxiRecommendPayload): Roxi
   const rawSex = (payload.sex || 'INDISTINTO').toUpperCase();
   const reqSex = rawSex === 'MACHO' || rawSex === 'HEMBRA' ? rawSex : 'INDISTINTO';
   const minW = payload.min_weight ?? 2.15;
-  const maxW = payload.max_weight ?? 2.50;
+  const maxW = payload.max_weight ?? 2.5;
 
-  // Filtrar galpones operativos con saldo
-  const scored = inventory
+  const deliveryCoords =
+    payload.delivery_latitude != null && payload.delivery_longitude != null
+      ? { lat: payload.delivery_latitude, lng: payload.delivery_longitude }
+      : null;
+
+  const withDistance = (barn: (typeof inventory)[number]) => {
+    const coords = FARM_COORDINATES[barn.farm_code];
+    return deliveryCoords && coords
+      ? haversineKm(deliveryCoords.lat, deliveryCoords.lng, coords.lat, coords.lng)
+      : 45;
+  };
+
+  // Filtros duros: estado, saldo, sexo y tolerancia de peso (±0.18 kg)
+  let eligible = inventory
     .filter((b) => b.barn_status === 'OPERATIVO' && b.barn_balance_available > 0)
-    .map((barn) => {
-      // 1. Edad biológica (max 40 pts) - Prioridad estricta > 45 días
-      let scoreEdad = 0;
-      if (barn.bird_age_days >= 47) scoreEdad = 40;
-      else if (barn.bird_age_days >= 45) scoreEdad = 35;
-      else if (barn.bird_age_days >= 42) scoreEdad = 25;
-      else if (barn.bird_age_days >= 38) scoreEdad = 15;
-      else scoreEdad = 5;
-
-      // 2. Sexo biológico compatible (max 20 pts)
-      let scoreSexo = 20;
-      if (reqSex !== 'INDISTINTO' && barn.sex !== reqSex) {
-        scoreSexo = 0;
-      }
-
-      // 3. Calibre de peso (max 20 pts)
-      let scorePeso = 10;
-      const weight = barn.average_weight_kg || 2.40;
-      if (weight >= minW && weight <= maxW) {
-        scorePeso = 20;
-      } else if (weight >= minW - 0.15 && weight <= maxW + 0.15) {
-        scorePeso = 10;
-      } else {
-        scorePeso = 2;
-      }
-
-      // 4. Saldo suficiente para cubrir el pedido (max 20 pts)
-      let scoreSaldo = 0;
-      if (barn.barn_balance_available >= reqQty) {
-        scoreSaldo = 20;
-      } else {
-        scoreSaldo = Math.max(2, Math.round((barn.barn_balance_available / reqQty) * 15));
-      }
-
-      const totalScore = scoreEdad + scoreSexo + scorePeso + scoreSaldo;
-
-      return {
-        farm_code: barn.farm_code,
-        farm_name: barn.farm_name,
-        barn_code: barn.barn_code,
-        current_age_days: Number(barn.bird_age_days.toFixed(1)),
-        current_weight_kg: Number(weight.toFixed(2)),
-        available_balance: barn.barn_balance_available,
-        sex: barn.sex,
-        distance_km: 38.0,
-        score_total: totalScore,
-        score_breakdown: {
-          edad_biologica: scoreEdad,
-          distancia_flete: 15,
-          calibre_peso: scorePeso,
-          eficiencia_saldo: scoreSaldo,
-        },
-        key_advantage: barn.bird_age_days >= 45
-          ? `Lote con ${barn.bird_age_days} días en ${barn.farm_name} (${barn.barn_code}), excelente calibre de ${weight.toFixed(2)} kg para saca prioritaria.`
-          : `Granja ${barn.farm_name} (${barn.barn_code}) con saldo disponible de ${barn.barn_balance_available.toLocaleString()} aves.`,
-      };
+    .filter((b) => reqSex === 'INDISTINTO' || b.sex === reqSex)
+    .filter((b) => {
+      const w = b.average_weight_kg || 2.4;
+      return w >= minW - 0.18 && w <= maxW + 0.18;
     });
 
-  // Ordenar de mayor a menor puntaje
+  if (eligible.length === 0) {
+    eligible = inventory.filter((b) => b.barn_status === 'OPERATIVO' && b.barn_balance_available > 0);
+  }
+
+  const candidates = eligible.map((barn) => {
+    const weight = barn.average_weight_kg || 2.4;
+    return { barn, weight, distance: withDistance(barn) };
+  });
+
+  const distances = candidates.map((c) => c.distance);
+  const minD = Math.min(...distances);
+  const maxD = Math.max(...distances);
+
+  const scored = candidates.map(({ barn, weight, distance }) => {
+    const age = barn.bird_age_days;
+    const agePoints = age >= 47 ? 40 : age >= 45 ? 36 : age >= 42 ? 26 : age >= 38 ? 16 : 6;
+    const distancePoints =
+      maxD > minD ? Math.round(30 * (1 - (distance - minD) / (maxD - minD))) : 30;
+    const weightPoints =
+      weight >= minW && weight <= maxW ? 20 : weight >= minW - 0.15 && weight <= maxW + 0.15 ? 12 : 4;
+    const stockPoints =
+      barn.barn_balance_available >= reqQty
+        ? 10
+        : Math.max(1, Math.round((10 * barn.barn_balance_available) / Math.max(reqQty, 1)));
+
+    return {
+      farm_code: barn.farm_code,
+      farm_name: barn.farm_name,
+      barn_code: barn.barn_code,
+      current_age_days: Number(age.toFixed(1)),
+      current_weight_kg: Number(weight.toFixed(2)),
+      available_balance: barn.barn_balance_available,
+      sex: barn.sex,
+      distance_km: distance,
+      score_total: Math.min(100, agePoints + distancePoints + weightPoints + stockPoints),
+      score_breakdown: {
+        edad_biologica: agePoints,
+        distancia_flete: distancePoints,
+        calibre_peso: weightPoints,
+        eficiencia_saldo: stockPoints,
+      },
+      key_advantage: `${age} días en ${barn.farm_name}, ${weight.toFixed(2)} kg y a ${distance} km del punto de entrega.`,
+    };
+  });
+
   scored.sort((a, b) => b.score_total - a.score_total);
 
   const best = scored[0] || {
     farm_code: 'TRAD1',
     farm_name: 'Tradisa 1',
     barn_code: 'G-01',
-    current_age_days: 47.0,
+    current_age_days: 47,
     current_weight_kg: 2.45,
     available_balance: 12500,
     sex: 'MACHO',
-    distance_km: 35.0,
-    score_total: 95,
-    score_breakdown: { edad_biologica: 40, distancia_flete: 18, calibre_peso: 19, eficiencia_saldo: 18 },
+    distance_km: 35,
+    score_total: 90,
+    score_breakdown: { edad_biologica: 40, distancia_flete: 25, calibre_peso: 20, eficiencia_saldo: 5 },
     key_advantage: 'Lote prioritario en Tradisa 1.',
   };
 
   const alt = scored[1] || null;
+  const maxDistance = maxD;
+  const savingKm = Math.max(0, maxDistance - best.distance_km);
 
   return {
     recommended_barn: best,
     alternative_barn: alt,
-    commercial_pitch: `Te sugiero ofrecer el Galpón ${best.barn_code} de la Granja ${best.farm_name}: cuenta con peso promedio de ${best.current_weight_kg} kg que calza exacto con lo acordado, ${best.current_age_days} días de crianza y saldo de ${best.available_balance.toLocaleString()} aves.`,
-    gestor_technical_notes: `Prioridad biológica: ${best.current_age_days} días de edad. Saldo disponible en galpón: ${best.available_balance.toLocaleString()} aves (${best.sex}).`,
-    split_recommendation: { enabled: false, reason: null },
-    estimated_freight_cost_saving_soles: 45.0,
-    warnings: best.current_age_days >= 45 ? [`Lote con edad crítica (${best.current_age_days} días). Saca prioritaria recomendada.`] : [],
+    commercial_pitch: `Te sugiero ofrecer el Galpón ${best.barn_code} de la Granja ${best.farm_name}: ${best.current_weight_kg} kg de peso promedio, ${best.current_age_days} días de crianza y a ${best.distance_km} km del punto de entrega.`,
+    gestor_technical_notes: `Prioridad biológica: ${best.current_age_days} días de edad. Distancia al destino: ${best.distance_km} km ${deliveryCoords ? '(calculada por coordenadas)' : '(sin coordenadas de entrega: estimada)'}. Saldo disponible: ${best.available_balance.toLocaleString()} aves.`,
+    split_recommendation: {
+      enabled: best.available_balance < reqQty,
+      reason: best.available_balance < reqQty ? 'Saldo menor a la cantidad requerida' : null,
+    },
+    estimated_freight_cost_saving_soles: Math.round(savingKm * 4.5 * 100) / 100,
+    warnings:
+      best.current_age_days >= 45
+        ? [`Lote con edad crítica (${best.current_age_days} días). Saca prioritaria.`]
+        : [],
     agent_name: 'ROXI',
-    model_used: 'gemini-2.0-flash (Motor Híbrido Resiliente)',
+    model_used: 'Motor local (sin conexión al backend)',
     execution_time_ms: 28,
   };
 }
@@ -205,11 +218,11 @@ export async function getRoxiStatus(): Promise<any> {
     return {
       agent_name: 'ROXI',
       role: 'Copiloto IA de Asignación y Planificación de Saca',
-      version: '2.0.0-Production',
-      model: 'gemini-2.0-flash',
-      api_key_configured: true,
-      mode: 'Live Inventory + Gemini 2.0 Flash (Motor Resiliente)',
-      status: 'OPERATIONAL',
+      version: '2.0.0',
+      model: 'no disponible',
+      api_key_configured: false,
+      mode: 'Sin conexión con el backend',
+      status: 'DEGRADED_FALLBACK',
       company: 'Avícola GR / Grupo El Rocío',
     };
   }

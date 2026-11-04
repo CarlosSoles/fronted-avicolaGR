@@ -109,18 +109,22 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
       )}
 
       {/* TABLA GENERAL CON SCROLL INTERNO Y ENCABEZADOS FIJOS (STICKY) */}
-      <div className="overflow-x-auto overflow-y-auto max-h-[580px] relative scrollbar-thin">
+      <div className="md:hidden px-3 py-2 text-[10px] font-bold text-slate-500 dark:text-slate-400 bg-slate-50 dark:bg-slate-800/60 border-b border-slate-200 dark:border-slate-800 flex items-center gap-1.5">
+        <ChevronRight className="w-3 h-3 shrink-0" />
+        <span>Desliza horizontalmente para ver todas las columnas</span>
+      </div>
+      <div className="block overflow-x-auto overflow-y-auto max-h-[580px] relative scrollbar-thin">
         <table className="w-full text-left border-collapse">
           <thead className="sticky top-0 z-20 shadow-2xs">
             <tr className="bg-slate-100 dark:bg-slate-900 text-slate-800 dark:text-slate-200 text-[11px] font-bold uppercase tracking-wider border-b border-slate-200 dark:border-slate-800">
-              <th className="py-3.5 px-4 bg-slate-100 dark:bg-slate-900">Granja</th>
-              <th className="py-3.5 px-4 bg-slate-100 dark:bg-slate-900">Galpón</th>
-              <th className="py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Edad Ave</th>
-              <th className="py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Especiales (Gral)</th>
-              <th className="py-3.5 px-4 text-right bg-slate-100 dark:bg-slate-900">Saldo x Galpón</th>
-              <th className="py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Peso Promedio &amp; Rango</th>
-              <th className="py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Sexo</th>
-              <th className="py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Acción</th>
+              <th className="py-3.5 px-2 sm:px-4 bg-slate-100 dark:bg-slate-900">Granja</th>
+              <th className="py-3.5 px-2 sm:px-4 bg-slate-100 dark:bg-slate-900">Galpón</th>
+              <th className="py-3.5 px-2 sm:px-4 text-center bg-slate-100 dark:bg-slate-900">Edad</th>
+              <th className="hidden sm:table-cell py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Especiales</th>
+              <th className="py-3.5 px-2 sm:px-4 text-right bg-slate-100 dark:bg-slate-900">Saldo x Galpón</th>
+              <th className="hidden md:table-cell py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Peso Promedio &amp; Rango</th>
+              <th className="hidden lg:table-cell py-3.5 px-4 text-center bg-slate-100 dark:bg-slate-900">Sexo</th>
+              <th className="py-3.5 px-2 sm:px-4 text-center bg-slate-100 dark:bg-slate-900">Acción</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800/80 text-xs font-medium">
@@ -137,14 +141,14 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
               return (
                 <tr key={`${item.farm_code}-${item.barn_id}`} className={`${rowColorClass} transition-colors`}>
                   {/* 1. GRANJA: SOLO EL CÓDIGO */}
-                  <td className="py-3 px-4 font-mono font-black text-sm tracking-wide">
-                    <span className="px-2.5 py-1 rounded-md bg-white/90 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 shadow-2xs inline-block text-slate-900 dark:text-slate-100">
+                  <td className="py-2.5 px-2 sm:py-3 sm:px-4 font-mono font-black text-xs sm:text-sm tracking-wide">
+                    <span className="px-2 py-0.5 sm:px-2.5 sm:py-1 rounded-md bg-white/90 dark:bg-slate-800 border border-slate-300 dark:border-slate-700 shadow-2xs inline-block text-slate-900 dark:text-slate-100">
                       {item.farm_code}
                     </span>
                   </td>
 
                   {/* 2. GALPÓN (CÓDIGO Y LOTE) */}
-                  <td className="py-3 px-4">
+                  <td className="py-2.5 px-2 sm:py-3 sm:px-4">
                     <div className="font-mono font-bold text-sm text-slate-900 dark:text-slate-100">
                       {item.barn_code || `G-${String(item.barn_number).padStart(2, '0')}`}
                     </div>
@@ -156,17 +160,17 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
                   </td>
 
                   {/* 3. EDAD DEL AVE */}
-                  <td className="py-3 px-4 text-center font-mono font-bold text-sm text-slate-900 dark:text-slate-100">
+                  <td className="py-2.5 px-2 sm:py-3 sm:px-4 text-center font-mono font-bold text-xs sm:text-sm text-slate-900 dark:text-slate-100">
                     {item.bird_age_days} días
                   </td>
 
                   {/* 4. ESPECIALES (CANT GENERAL) */}
-                  <td className="py-3 px-4 text-center font-bold text-sm text-slate-900 dark:text-slate-100 font-mono">
+                  <td className="hidden sm:table-cell py-3 px-4 text-center font-bold text-sm text-slate-900 dark:text-slate-100 font-mono">
                     {item.specials_general_count.toLocaleString()}
                   </td>
 
                   {/* 5. SALDO POR GALPÓN (DISPONIBLE PARA VENTA) */}
-                  <td className="py-3 px-4 text-right">
+                  <td className="py-2.5 px-2 sm:py-3 sm:px-4 text-right">
                     <div className="flex flex-col items-end">
                       <span className="font-mono font-extrabold text-sm text-slate-900 dark:text-slate-100">
                         {item.barn_balance_available.toLocaleString()} aves
@@ -179,7 +183,7 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
                   </td>
 
                   {/* 6. PESO PROMEDIO & RANGO */}
-                  <td className="py-3 px-4 text-center">
+                  <td className="hidden md:table-cell py-3 px-4 text-center">
                     {hasWeight ? (
                       <div className="inline-flex flex-col items-center">
                         <span className="font-mono font-extrabold text-sm text-slate-900 dark:text-slate-100">
@@ -198,12 +202,12 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
                   </td>
 
                   {/* 7. SEXO: TEXTO LIMPIO SIN RECUADRO NI SÍMBOLOS */}
-                  <td className="py-3 px-4 text-center font-bold text-xs uppercase tracking-wide text-slate-800 dark:text-slate-200">
+                  <td className="hidden lg:table-cell py-3 px-4 text-center font-bold text-xs uppercase tracking-wide text-slate-800 dark:text-slate-200">
                     {isMacho ? 'Macho' : 'Hembra'}
                   </td>
 
                   {/* 8. ACCIÓN ÚNICA: CERRAR GALPÓN */}
-                  <td className="py-3 px-4 text-center">
+                  <td className="py-2.5 px-2 sm:py-3 sm:px-4 text-center">
                     <button
                       type="button"
                       onClick={() => setConfirmClosingItem(item)}
@@ -215,7 +219,7 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
                       title="Cerrar galpón (ya no tiene venta)"
                     >
                       <XCircle className={`w-3.5 h-3.5 ${item.bird_age_days > 45 ? 'text-white' : 'text-red-600 group-hover:text-white'}`} />
-                      <span>{item.bird_age_days > 45 ? 'Cierre Prioritario' : 'Cerrar Galpón'}</span>
+                      <span className="hidden sm:inline">{item.bird_age_days > 45 ? 'Cierre Prioritario' : 'Cerrar Galpón'}</span>
                     </button>
                   </td>
                 </tr>
@@ -246,7 +250,7 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
         </div>
 
         {/* Controles de Paginación */}
-        <div className="flex items-center gap-1">
+        <div className="flex items-center gap-1 flex-wrap justify-center">
           {/* Ir al inicio */}
           <button
             type="button"

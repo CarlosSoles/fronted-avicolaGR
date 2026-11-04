@@ -301,6 +301,8 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
                     max_weight: currentOrder.max_weight_kg,
                     zone_code: currentOrder.zone_code || 'CENTRO',
                     delivery_address: currentOrder.delivery_address,
+                    delivery_latitude: currentOrder.delivery_latitude,
+                    delivery_longitude: currentOrder.delivery_longitude,
                     scheduled_date: currentOrder.target_delivery_date,
                   }}
                   currentFarmCode={assignedFarm}

@@ -245,24 +245,23 @@ export const AdminPage: React.FC = () => {
       const lat = farmLat ? parseFloat(farmLat) : null;
       const lng = farmLng ? parseFloat(farmLng) : null;
 
-      try {
-        await apiClient(`/admin/farms/${editingFarmCoords.code}/coordinates`, {
-          method: 'PUT',
-          body: JSON.stringify({ latitude: lat, longitude: lng }),
-        });
-      } catch {
-        // En caso de modo offline
-      }
+      // Solo se confirma el guardado si el servidor lo aceptó
+      const saved = await apiClient<FarmItem>(`/admin/farms/${editingFarmCoords.code}/coordinates`, {
+        method: 'PUT',
+        body: JSON.stringify({ latitude: lat, longitude: lng }),
+      });
 
       const updated = farms.map((f) =>
-        f.code === editingFarmCoords.code ? { ...f, latitude: lat, longitude: lng } : f
+        f.code === editingFarmCoords.code
+          ? { ...f, latitude: saved?.latitude ?? lat, longitude: saved?.longitude ?? lng }
+          : f
       );
       setFarms(updated);
       localStorage.setItem('avicola_admin_farms_coords', JSON.stringify(updated));
       showNotification(`✔ Coordenadas satelitales de "${editingFarmCoords.name}" guardadas exitosamente.`);
       setEditingFarmCoords(null);
     } catch (err: any) {
-      showNotification(`Error al guardar coordenadas: ${err?.message || 'Error desconocido'}`);
+      showNotification(`❌ No se pudieron guardar las coordenadas: ${err?.message || 'Error desconocido'}`);
     } finally {
       setIsSavingFarmCoords(false);
     }

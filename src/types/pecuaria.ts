@@ -8,6 +8,46 @@ export interface OfficialFarmDefinition {
   zone: string;
 }
 
+// Coordenadas reales de las granjas (WGS84), sincronizadas con la tabla `farms`.
+// Se usan para calcular cercanía al punto de entrega cuando el backend no está disponible.
+export const FARM_COORDINATES: Record<string, { lat: number; lng: number }> = {
+  '507': { lat: -11.932109, lng: -77.06789 },
+  ESMER: { lat: -8.16789, lng: -79.078901 },
+  HARC2: { lat: -12.334567, lng: -76.823456 },
+  MORI2: { lat: -8.37002, lng: -78.869961 },
+  'NUC-9': { lat: -11.954321, lng: -77.045678 },
+  'NUC-B': { lat: -11.94321, lng: -77.056789 },
+  PAC67: { lat: -12.245678, lng: -76.912345 },
+  PACI1: { lat: -12.26789, lng: -76.890123 },
+  PACI2: { lat: -12.278901, lng: -76.879012 },
+  PACI5: { lat: -12.289012, lng: -76.867901 },
+  PACI6: { lat: -12.234567, lng: -76.923456 },
+  PACI7: { lat: -12.256789, lng: -76.901234 },
+  QBAGA: { lat: -8.178901, lng: -79.089012 },
+  'R4G-A': { lat: -12.323456, lng: -76.834567 },
+  'R4G-B': { lat: -12.301234, lng: -76.856789 },
+  'R4G-C': { lat: -12.312345, lng: -76.845678 },
+  SEMIA: { lat: -8.145678, lng: -79.056789 },
+  SEMIB: { lat: -8.156789, lng: -79.06789 },
+  SISA1: { lat: -11.965432, lng: -77.034567 },
+  SISA2: { lat: -11.987654, lng: -77.012345 },
+  SISA3: { lat: -11.976543, lng: -77.023456 },
+  TRAD1: { lat: -8.125432, lng: -79.034567 },
+  TRAD2: { lat: -8.132145, lng: -79.041234 },
+};
+
+/** Distancia en km entre dos coordenadas WGS84 (fórmula de Haversine). */
+export function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const toRad = (v: number) => (v * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return Math.round(2 * R * Math.asin(Math.sqrt(a)) * 100) / 100;
+}
+
 export const OFFICIAL_FARMS: OfficialFarmDefinition[] = [
   { name: 'Tradisa 1', code: 'TRAD1', zone: 'ZONA_NORTE' },
   { name: 'Tradisa II', code: 'TRAD2', zone: 'ZONA_NORTE' },

@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
-import { SalesOrder } from '@/types/comercial';
+import { SalesOrder, computeCages } from '@/types/comercial';
 import { formatDateDisplay } from '../../pages/GestionComercialPage';
 
 interface WhatsAppManifestModalProps {
@@ -24,7 +24,7 @@ interface WhatsAppManifestModalProps {
 
 export const generateWhatsAppManifestText = (order: SalesOrder): string => {
   const birds = order.allocated_quantity || order.requested_quantity || 0;
-  const cages = order.estimated_cages || Math.ceil(birds / 8);
+  const cages = order.estimated_cages || computeCages(birds, order.density_birds_per_cage);
   const avgW = (order.min_weight_kg + order.max_weight_kg) / 2.0;
   const tons = order.estimated_total_kg
     ? (order.estimated_total_kg / 1000).toFixed(1)

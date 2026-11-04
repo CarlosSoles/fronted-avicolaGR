@@ -70,7 +70,7 @@ export const DashboardLayout: React.FC = () => {
       label: 'Área Comercial',
       sublabel: 'Pedidos & Programación',
       icon: ShoppingCart,
-      allowedRoles: ['vendedor', 'admin_sistema'],
+      allowedRoles: ['vendedor', 'gestor_comercial', 'gerente_comercial', 'admin_sistema'],
     },
     {
       to: '/gestion-comercial',
@@ -408,8 +408,8 @@ export const DashboardLayout: React.FC = () => {
               </span>
             </NavLink>
 
-            {/* Selector de Modo: Claro / Oscuro */}
-            <div className="flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
+            {/* Selector de Modo: Claro / Oscuro (solo escritorio; en móvil está en la barra superior) */}
+            <div className="hidden md:flex items-center p-1 bg-slate-100 dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 shadow-2xs">
               <button
                 type="button"
                 onClick={() => setTheme('light')}

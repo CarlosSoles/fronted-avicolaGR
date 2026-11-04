@@ -6,7 +6,7 @@ import {
   CheckCircle2,
   Filter,
 } from 'lucide-react';
-import { SalesOrder, DispatchPhase } from '@/types/comercial';
+import { SalesOrder, DispatchPhase, computeCages } from '@/types/comercial';
 import { DISPATCH_PHASES } from './DispatchLifecycleStepper';
 
 interface DispatchPhasePipelineProps {
@@ -36,7 +36,7 @@ export const DispatchPhasePipeline: React.FC<DispatchPhasePipelineProps> = ({
     const totalKg = phaseOrders.reduce((sum, o) => sum + (o.estimated_total_kg || 0), 0);
     const totalTons = Number((totalKg / 1000).toFixed(1));
     const totalCages = phaseOrders.reduce(
-      (sum, o) => sum + (o.estimated_cages || Math.round((o.allocated_quantity || o.requested_quantity || 0) / 8)),
+      (sum, o) => sum + (o.estimated_cages || computeCages(o.allocated_quantity || o.requested_quantity || 0, o.density_birds_per_cage)),
       0
     );
 
