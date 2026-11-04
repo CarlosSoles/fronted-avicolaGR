@@ -17,6 +17,8 @@ build/
 .env
 .env.*
 !.env.example
+# El .env.production SÍ se versiona: Vite lo necesita durante el build en Cloudflare Pages
+!.env.production
 *.env
 
 # Logs
