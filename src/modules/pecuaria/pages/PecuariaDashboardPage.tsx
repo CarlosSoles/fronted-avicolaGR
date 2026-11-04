@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { TablaGeneralSaldo } from '../components/TablaGeneralSaldo';
 import { PesajeIndividualModal } from '../components/PesajeIndividualModal';
+import { GalponesView } from '../components/GalponesView';
 import { TablaGeneralSaldoItem, TablaGeneralSaldoResponse, OFFICIAL_FARMS } from '@/types/pecuaria';
 import { apiClient } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
@@ -18,9 +19,12 @@ import {
   Clock,
   Sparkles,
   X,
+  Warehouse,
+  Table2,
 } from 'lucide-react';
 
 export const PecuariaDashboardPage: React.FC = () => {
+  const [activeTab, setActiveTab] = useState<'saldo' | 'galpones'>('saldo');
   const [data, setData] = useState<TablaGeneralSaldoItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -216,12 +220,41 @@ export const PecuariaDashboardPage: React.FC = () => {
         </div>
       </div>
 
+      {/* Pestañas del módulo */}
+      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
+        <button
+          type="button"
+          onClick={() => setActiveTab('saldo')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
+            activeTab === 'saldo'
+              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
+              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <Table2 className="w-4 h-4" />
+          <span>Tabla General de Saldo</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setActiveTab('galpones')}
+          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
+            activeTab === 'galpones'
+              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
+              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <Warehouse className="w-4 h-4" />
+          <span>Ver Galpones</span>
+        </button>
+      </div>
+
       {loadError && (
         <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-rose-800 dark:text-rose-300">
           <span className="flex items-start gap-2">
             <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
             <span>
-              <strong className="block">No se pudo cargar la Tabla General de Saldo</strong>
+              <strong className="block">No se pudo cargar la información de Pecuaria</strong>
               {loadError}
             </span>
           </span>
@@ -230,6 +263,11 @@ export const PecuariaDashboardPage: React.FC = () => {
           </Button>
         </div>
       )}
+
+      {activeTab === 'galpones' ? (
+        <GalponesView data={data} isLoading={isLoading} />
+      ) : (
+        <>
 
       {/* 1. TARJETAS DE KPIS: 6 TARJETAS BALANCEADAS (TOTAL, ESPECIALES, DISPONIBLE SACA, MACHOS, HEMBRAS, PRIORIDAD) */}
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-2.5 sm:gap-3.5">
@@ -565,6 +603,9 @@ export const PecuariaDashboardPage: React.FC = () => {
         isLoading={isLoading}
         onCerrarGalpon={handleCerrarGalpon}
       />
+
+        </>
+      )}
 
       {/* MODAL DE PESAJE CON DECLARACIÓN DE TOTAL, SALDOS Y GENERACIÓN DE RANGO */}
       <PesajeIndividualModal

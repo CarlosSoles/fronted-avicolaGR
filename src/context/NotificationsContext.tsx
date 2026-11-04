@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '@/modules/auth/context/AuthContext';
 import { apiClient } from '@/lib/api';
+import { supabase } from '@/lib/supabase';
 import { UserRole } from '@/types/auth';
 
 export type NotificationCategory = 'pecuaria' | 'gestion_comercial' | 'comercial' | 'admin';
@@ -113,8 +114,23 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode }> = ({
 
   useEffect(() => {
     load();
+    // Realtime: refresca al instante cuando se inserta/actualiza una notificación
+    const channel = supabase
+      .channel('notifications-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'notifications' },
+        () => load()
+      )
+      .subscribe();
+
+    // Fallback por sondeo en caso de que Realtime no esté disponible
     const timer = setInterval(load, 60000);
-    return () => clearInterval(timer);
+
+    return () => {
+      clearInterval(timer);
+      supabase.removeChannel(channel);
+    };
   }, [load]);
 
   // El backend ya filtra por rol o por usuario; el admin ve el panorama completo

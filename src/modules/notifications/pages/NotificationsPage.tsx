@@ -52,6 +52,7 @@ const AREA_META: Record<
       { key: 'despacho', label: 'Flota & Despacho' },
       { key: 'observacion', label: 'Observaciones' },
       { key: 'reserva', label: 'Reservas Galpón' },
+      { key: 'cliente', label: 'Nuevos Clientes' },
     ],
   },
   comercial: {
@@ -63,6 +64,7 @@ const AREA_META: Record<
       { key: 'aprobado', label: 'Aprobados por Gestor' },
       { key: 'observacion', label: 'Acción Requerida' },
       { key: 'entrega', label: 'En Ruta / Entregados' },
+      { key: 'ajuste', label: 'Ajustes de Pedido' },
     ],
   },
   admin: {
