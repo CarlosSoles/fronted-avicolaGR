@@ -70,7 +70,7 @@ export const DashboardLayout: React.FC = () => {
       label: 'Área Comercial',
       sublabel: 'Pedidos & Programación',
       icon: ShoppingCart,
-      allowedRoles: ['vendedor', 'gestor_comercial', 'gerente_comercial', 'admin_sistema'],
+      allowedRoles: ['vendedor', 'admin_sistema'],
     },
     {
       to: '/gestion-comercial',

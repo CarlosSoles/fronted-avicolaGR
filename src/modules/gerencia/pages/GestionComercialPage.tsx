@@ -72,6 +72,7 @@ import { AuditTimeline } from '../components/audit/AuditTimeline';
 import { RoxiCopilotCard } from '@/components/roxi/RoxiCopilotCard';
 import { RoxiAvatar } from '@/components/roxi/RoxiAvatar';
 import { RoxiGestorDashboard } from '@/components/roxi/RoxiGestorDashboard';
+import { ClientsPanel } from '@/modules/comercial/components/ClientsPanel';
 
 // Helper de formato de fecha
 export const formatDateDisplay = (dateStr?: string | null): string => {
@@ -151,7 +152,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Pestaña activa
-  const [activeTab, setActiveTab] = useState<'pedidos' | 'despacho' | 'flota' | 'pecuaria' | 'mapa_gps' | 'roxi'>('pedidos');
+  const [activeTab, setActiveTab] = useState<'pedidos' | 'clientes' | 'despacho' | 'flota' | 'pecuaria' | 'mapa_gps' | 'roxi'>('pedidos');
   const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string>('VH-001');
   const [roxiSelectedOrderId, setRoxiSelectedOrderId] = useState<string>('');
 
@@ -1488,6 +1489,18 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
         </button>
 
         <button
+          onClick={() => setActiveTab('clientes')}
+          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
+            activeTab === 'clientes'
+              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Building2 className="w-4 h-4 shrink-0" />
+          <span>Clientes</span>
+        </button>
+
+        <button
           onClick={() => setActiveTab('despacho')}
           className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
             activeTab === 'despacho'
@@ -2287,6 +2300,11 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       {activeTab === 'mapa_gps' && (
         <FlotaGpsMap initialSelectedTruckId={selectedGpsTruckId} readOnly={true} orders={orders} />
       )}
+
+      {/* ========================================================================= */}
+      {/* PESTAÑA: CATÁLOGO DE CLIENTES */}
+      {/* ========================================================================= */}
+      {activeTab === 'clientes' && <ClientsPanel />}
 
       {/* ========================================================================= */}
       {/* PESTAÑA 6: CENTRO DE CONTROL & ASISTENTE INTELIGENTE ROXI */}
