@@ -125,8 +125,7 @@ export const RoxiChatPanel: React.FC<RoxiChatPanelProps> = ({
       id: 'welcome',
       role: 'assistant',
       text:
-        'Hola, soy **ROXI**. Te ayudaré en lo que necesites. ' +
-        'Puedes escribirme, usar los accesos rápidos o hablarme por micrófono.',
+        'Hola, soy **ROXI**. ¿En qué te ayudo hoy?',
       spokenText:
         'Hola, soy ROXI. ¿En qué te ayudo hoy?',
       mood: 'saludando',
@@ -308,7 +307,7 @@ export const RoxiChatPanel: React.FC<RoxiChatPanelProps> = ({
       const errMsg: ChatMessage = {
         id: `err-${Date.now()}`,
         role: 'assistant',
-        text: 'No pude consultar al servidor en este momento. Verifica la conexión del backend e intenta nuevamente.',
+        text: 'No pude conectarme al servidor en este momento.',
         spokenText: 'No pude conectarme al servidor en este momento.',
         mood: 'rechazo',
         inScope: true,
@@ -417,8 +416,8 @@ export const RoxiChatPanel: React.FC<RoxiChatPanelProps> = ({
               if (!next) stopAudio();
             }}
             className={`h-8 px-2.5 text-[11px] font-bold ${autoVoice
-                ? 'border-violet-300 text-violet-700 bg-violet-50/70 dark:border-violet-700 dark:text-violet-300 dark:bg-violet-950/40'
-                : 'text-slate-500'
+              ? 'border-violet-300 text-violet-700 bg-violet-50/70 dark:border-violet-700 dark:text-violet-300 dark:bg-violet-950/40'
+              : 'text-slate-500'
               }`}
           >
             {autoVoice ? (
@@ -476,10 +475,10 @@ export const RoxiChatPanel: React.FC<RoxiChatPanelProps> = ({
 
                 <div
                   className={`max-w-[82%] rounded-2xl px-3.5 py-2.5 text-xs shadow-2xs ${isUser
-                      ? 'bg-violet-600 text-white rounded-br-sm'
-                      : msg.inScope === false
-                        ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-slate-800 dark:text-slate-200 rounded-bl-sm'
-                        : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-bl-sm'
+                    ? 'bg-violet-600 text-white rounded-br-sm'
+                    : msg.inScope === false
+                      ? 'bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 text-slate-800 dark:text-slate-200 rounded-bl-sm'
+                      : 'bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 rounded-bl-sm'
                     }`}
                 >
                   <div className="leading-relaxed">
@@ -575,8 +574,8 @@ export const RoxiChatPanel: React.FC<RoxiChatPanelProps> = ({
                 : 'Tu navegador no soporta dictado por voz (usa Chrome o Edge)'
             }
             className={`h-10 w-10 p-0 shrink-0 ${isListening
-                ? 'bg-rose-50 border-rose-400 text-rose-600 animate-pulse dark:bg-rose-950/50 dark:border-rose-700'
-                : ''
+              ? 'bg-rose-50 border-rose-400 text-rose-600 animate-pulse dark:bg-rose-950/50 dark:border-rose-700'
+              : ''
               }`}
           >
             {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}

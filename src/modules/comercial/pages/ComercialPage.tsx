@@ -11,6 +11,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { ModuleTabs, ModuleTabItem } from '@/components/ui/ModuleTabs';
 import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
+import { KpiCard } from '@/components/ui/KpiCard';
 import { LazyFlotaGpsMap as FlotaGpsMap } from '@/modules/gerencia/components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
 import {
@@ -1058,56 +1059,38 @@ export const ComercialPage: React.FC = () => {
       {activeTab === 'programacion' && (
         <div className="space-y-5">
           {/* Tarjetas de KPIs de la Programación Comercial */}
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
-            {/* KPI 1: Total Pedidos */}
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider">Total Pedidos</span>
-                <ShoppingCart className="w-4 h-4 text-slate-500" />
-              </div>
-              <div className="text-2xl font-black text-slate-950 dark:text-white font-mono">{kpiTotal}</div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Cartera comercial activa</div>
-            </div>
-
-            {/* KPI 2: Preprogramación */}
-            <div className="bg-amber-50/70 dark:bg-amber-950/30 p-4 rounded-2xl border-2 border-amber-300 dark:border-amber-800/60 shadow-xs">
-              <div className="flex items-center justify-between text-amber-800 dark:text-amber-300 mb-1">
-                <span className="text-[10px] font-black uppercase tracking-wider">Preprogramación</span>
-                <Clock className="w-4 h-4 text-amber-600" />
-              </div>
-              <div className="text-2xl font-black text-amber-900 dark:text-amber-200 font-mono">{kpiPreprogramacion}</div>
-              <div className="text-[10px] text-amber-800 dark:text-amber-400 mt-0.5 font-semibold">Esperando asignación del gestor</div>
-            </div>
-
-            {/* KPI 3: Programados */}
-            <div className="bg-sky-50/70 dark:bg-sky-950/25 p-4 rounded-2xl border-2 border-sky-400 dark:border-sky-600/60 shadow-xs">
-              <div className="flex items-center justify-between text-sky-800 dark:text-sky-300 mb-1">
-                <span className="text-[10px] font-black uppercase tracking-wider">Programados</span>
-                <CheckCircle2 className="w-4 h-4 text-sky-600" />
-              </div>
-              <div className="text-2xl font-black text-sky-900 dark:text-sky-200 font-mono">{kpiProgramados}</div>
-              <div className="text-[10px] text-sky-700 dark:text-sky-400 mt-0.5 font-bold">Con reserva en firme para saca</div>
-            </div>
-
-            {/* KPI 4: Con observación */}
-            <div className="bg-rose-50/60 dark:bg-rose-950/30 p-4 rounded-2xl border border-rose-300 dark:border-rose-900 shadow-xs">
-              <div className="flex items-center justify-between text-rose-800 dark:text-rose-300 mb-1">
-                <span className="text-[10px] font-black uppercase tracking-wider">Con observación</span>
-                <AlertTriangle className="w-4 h-4 text-rose-600" />
-              </div>
-              <div className="text-2xl font-black text-rose-900 dark:text-rose-200 font-mono">{kpiObservados}</div>
-              <div className="text-[10px] text-rose-700 dark:text-rose-400 mt-0.5 font-medium">Requieren ajuste del cliente</div>
-            </div>
-
-            {/* KPI 5: Total Aves Programadas */}
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs col-span-2 sm:col-span-1">
-              <div className="flex items-center justify-between text-slate-500 mb-1">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider">Aves Programadas</span>
-                <Layers className="w-4 h-4 text-red-600" />
-              </div>
-              <div className="text-2xl font-black text-slate-950 dark:text-white font-mono">{kpiTotalAves.toLocaleString()}</div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">Demanda total solicitada</div>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KpiCard
+              title="Total pedidos"
+              value={kpiTotal}
+              subtitle="Cartera comercial activa"
+              accent="slate"
+            />
+            <KpiCard
+              title="Preprogramación"
+              value={kpiPreprogramacion}
+              subtitle="Esperando asignación del gestor"
+              accent="amber"
+            />
+            <KpiCard
+              title="Programados"
+              value={kpiProgramados}
+              subtitle="Con reserva en firme para saca"
+              accent="sky"
+            />
+            <KpiCard
+              title="Con observación"
+              value={kpiObservados}
+              subtitle="Requieren ajuste del cliente"
+              accent="rose"
+            />
+            <KpiCard
+              title="Aves programadas"
+              value={kpiTotalAves.toLocaleString()}
+              subtitle="Demanda total solicitada"
+              accent="violet"
+              className="col-span-2 sm:col-span-1"
+            />
           </div>
 
           {/* Panel de Filtros y Búsqueda de la Programación */}

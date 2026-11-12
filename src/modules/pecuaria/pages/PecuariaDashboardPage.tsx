@@ -6,6 +6,7 @@ import { apiClient } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
 import { ModuleTabs } from '@/components/ui/ModuleTabs';
+import { KpiCard } from '@/components/ui/KpiCard';
 import {
   Bird,
   AlertTriangle,
@@ -237,74 +238,38 @@ export const PecuariaDashboardPage: React.FC = () => {
         <>
 
       {/* 1. TARJETAS DE KPIS: 5 TARJETAS BALANCEADAS (TOTAL, ESPECIALES, DISPONIBLE SACA, MACHOS, HEMBRAS) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-2.5 sm:gap-3.5">
-        {/* KPI 1: Saldo de Aves (Físico Total) */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-slate-400 dark:text-slate-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Saldo de Aves</span>
-            <Bird className="w-4 h-4 text-slate-500 dark:text-slate-400" />
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-slate-900 dark:text-slate-100 font-mono">
-            {totalPhysicalCount.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Población total en granjas</div>
-        </div>
-
-        {/* KPI 2: Saldo Especiales */}
-        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-amber-600 dark:text-amber-500 mb-1">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Saldo Especiales</span>
-            <AlertTriangle className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-amber-800 dark:text-amber-300 font-mono">
-            {totalSpecials.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5 font-medium">Aves con defectos descontadas</div>
-        </div>
-
-        {/* KPI 3: Saldo Disponible para Saca (Total Aves - Especiales) */}
-        <div className="bg-emerald-50/70 dark:bg-emerald-950/25 border-2 border-emerald-400 dark:border-emerald-600/60 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-emerald-800 dark:text-emerald-300 mb-1">
-            <span className="text-[11px] font-black uppercase tracking-wider text-emerald-900 dark:text-emerald-300">
-              Disponible Saca
-            </span>
-            <CheckCircle className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-emerald-800 dark:text-emerald-200 font-mono">
-            {totalNetSaca.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-emerald-700 dark:text-emerald-400 mt-0.5 font-bold">
-            Total aves - especiales
-          </div>
-        </div>
-
-        {/* KPI 4: Saldo Machos */}
-        <div className="bg-blue-50/80 dark:bg-[#0c1f38]/60 border-2 border-blue-400 dark:border-blue-500/50 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-blue-900 dark:text-blue-200 mb-1">
-            <span className="text-[11px] font-black uppercase tracking-wider text-blue-950 dark:text-blue-200">
-              Saldo Machos
-            </span>
-            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-blue-200 dark:bg-blue-900/60 text-blue-900 dark:text-blue-200">M</span>
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-blue-950 dark:text-blue-100 font-mono">
-            {totalSaldoMachos.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-blue-800 dark:text-blue-300 mt-0.5 font-semibold">Aves disponibles libres</div>
-        </div>
-
-        {/* KPI 5: Saldo Hembras */}
-        <div className="bg-rose-50/80 dark:bg-[#2e1219]/60 border-2 border-red-400 dark:border-rose-500/50 p-3 sm:p-4 rounded-2xl shadow-xs transition-colors">
-          <div className="flex items-center justify-between text-red-900 dark:text-rose-200 mb-1">
-            <span className="text-[11px] font-black uppercase tracking-wider text-red-950 dark:text-rose-200">
-              Saldo Hembras
-            </span>
-            <span className="text-xs font-bold px-1.5 py-0.5 rounded bg-rose-200 dark:bg-rose-900/60 text-red-900 dark:text-rose-200">H</span>
-          </div>
-          <div className="text-xl sm:text-2xl font-black text-red-950 dark:text-rose-100 font-mono">
-            {totalSaldoHembras.toLocaleString()}
-          </div>
-          <div className="text-[10px] text-red-800 dark:text-rose-300 mt-0.5 font-semibold">Aves disponibles libres</div>
-        </div>
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+        <KpiCard
+          title="Saldo de aves"
+          value={totalPhysicalCount.toLocaleString()}
+          subtitle="Población total en granjas"
+          accent="violet"
+        />
+        <KpiCard
+          title="Saldo especiales"
+          value={totalSpecials.toLocaleString()}
+          subtitle="Aves con defectos descontadas"
+          accent="amber"
+        />
+        <KpiCard
+          title="Disponible saca"
+          value={totalNetSaca.toLocaleString()}
+          subtitle="Total aves - especiales"
+          accent="emerald"
+        />
+        <KpiCard
+          title="Saldo machos"
+          value={totalSaldoMachos.toLocaleString()}
+          subtitle="Aves disponibles libres"
+          accent="blue"
+        />
+        <KpiCard
+          title="Saldo hembras"
+          value={totalSaldoHembras.toLocaleString()}
+          subtitle="Aves disponibles libres"
+          accent="rose"
+          className="col-span-2 md:col-span-1"
+        />
       </div>
 
       {/* 2. BARRA DE FILTROS OPTIMIZADA, ALINEADA Y ESTRUCTURADA */}

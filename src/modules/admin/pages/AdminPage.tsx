@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { ModuleTabs } from '@/components/ui/ModuleTabs';
+import { KpiCard } from '@/components/ui/KpiCard';
 import {
   ZoneCageDensity,
   DEFAULT_ZONE_DENSITIES,
@@ -777,54 +778,31 @@ export const AdminPage: React.FC = () => {
       {activeTab === 'usuarios' && (
         <div className="space-y-5">
           {/* Métricas Resumen */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
-                Total Usuarios
-              </div>
-              <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                {totalUsers}
-              </div>
-              <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                Cuentas registradas
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="text-xs font-bold text-emerald-600 dark:text-emerald-400 uppercase tracking-wider">
-                Usuarios Activos
-              </div>
-              <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                {activeUsers}
-              </div>
-              <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                Con acceso permitido
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="text-xs font-bold text-rose-600 dark:text-rose-400 uppercase tracking-wider">
-                Área Pecuaria
-              </div>
-              <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                {pecuarioUsers}
-              </div>
-              <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                Supervisores &amp; Registradores
-              </div>
-            </div>
-
-            <div className="bg-white dark:bg-slate-900 p-4 rounded-xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="text-xs font-bold text-blue-600 dark:text-blue-400 uppercase tracking-wider">
-                Área Comercial
-              </div>
-              <div className="text-2xl font-black text-slate-900 dark:text-slate-100 mt-1">
-                {comercialUsers}
-              </div>
-              <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5">
-                Gestión, Gerencia &amp; Ventas
-              </div>
-            </div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <KpiCard
+              title="Total usuarios"
+              value={totalUsers}
+              subtitle="Cuentas registradas"
+              accent="slate"
+            />
+            <KpiCard
+              title="Usuarios activos"
+              value={activeUsers}
+              subtitle="Con acceso permitido"
+              accent="emerald"
+            />
+            <KpiCard
+              title="Área pecuaria"
+              value={pecuarioUsers}
+              subtitle="Supervisores & Registradores"
+              accent="rose"
+            />
+            <KpiCard
+              title="Área comercial"
+              value={comercialUsers}
+              subtitle="Gestión, Gerencia & Ventas"
+              accent="blue"
+            />
           </div>
 
           {/* Barra de Búsqueda y Botón "+ Nuevo Usuario" */}

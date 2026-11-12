@@ -1,7 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Search,
-  RefreshCw,
   Download,
   ArrowUpDown,
   Lock,
@@ -9,6 +8,8 @@ import {
   AlertTriangle,
   CheckCircle2,
   Database,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Modal } from '@/components/ui/Modal';
@@ -108,7 +109,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
   const [selectedFarm, setSelectedFarm] = useState<string>('ALL');
   const [selectedSex, setSelectedSex] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
-  const [selectedAge, setSelectedAge] = useState<string>('ALL');
+  const [selectedAge, setSelectedAge] = useState<'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38'>('ALL');
   const [maxBalanceInput, setMaxBalanceInput] = useState<string>('');
 
   const [sortKey, setSortKey] = useState<SortKey>('farm_code');
@@ -116,6 +117,8 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
 
   const [barnToClose, setBarnToClose] = useState<TablaGeneralSaldoItem | null>(null);
   const [isClosingBarn, setIsClosingBarn] = useState<boolean>(false);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const PAGE_SIZE = 15;
 
   const hasActiveFilters =
     searchTerm.trim() !== '' ||
@@ -147,10 +150,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       .sort((a, b) => a.code.localeCompare(b.code));
   }, [items]);
 
-  const ageOptions = useMemo(() => {
-    return Array.from(new Set(items.map((it) => it.bird_age_days))).sort((a, b) => a - b);
-  }, [items]);
-
   const filteredItems = useMemo(() => {
     const q = searchTerm.trim().toLowerCase();
     const maxBal = maxBalanceInput.trim() !== '' ? Number(maxBalanceInput) : null;
@@ -159,7 +158,9 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       if (selectedFarm !== 'ALL' && it.farm_code !== selectedFarm) return false;
       if (selectedSex !== 'ALL' && it.sex !== selectedSex) return false;
       if (selectedStatus !== 'ALL' && it.barn_status !== selectedStatus) return false;
-      if (selectedAge !== 'ALL' && String(it.bird_age_days) !== selectedAge) return false;
+      if (selectedAge === 'OVER_45' && it.bird_age_days <= 45) return false;
+      if (selectedAge === 'RANGE_38_45' && (it.bird_age_days < 38 || it.bird_age_days > 45)) return false;
+      if (selectedAge === 'UNDER_38' && it.bird_age_days >= 38) return false;
       if (maxBal !== null && Number.isFinite(maxBal) && it.barn_balance_available >= maxBal) {
         return false;
       }
@@ -222,6 +223,17 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
     sortKey,
     sortAsc,
   ]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedFarm, selectedSex, selectedStatus, selectedAge, maxBalanceInput, sortKey, sortAsc]);
+
+  const totalPages = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+  const safePage = Math.min(currentPage, totalPages);
+  const paginatedItems = useMemo(() => {
+    const start = (safePage - 1) * PAGE_SIZE;
+    return filteredItems.slice(start, start + PAGE_SIZE);
+  }, [filteredItems, safePage]);
 
   const kpis = useMemo(() => {
     let totalBirds = 0;
@@ -369,7 +381,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-purple-700 dark:text-purple-400 mt-1">
             {formatInt(kpis.totalBirds)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Total de la selección</div>
         </button>
 
         {/* KPI 2: Galpones Abiertos */}
@@ -386,7 +397,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-400 mt-1">
             {formatInt(kpis.openBarns)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Operativos en selección</div>
         </button>
 
         {/* KPI 3: Registros */}
@@ -395,7 +405,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
             {formatInt(kpis.records)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Galpones y campañas</div>
         </div>
 
         {/* KPI 4: Macho */}
@@ -413,7 +422,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-1">
             {formatInt(kpis.maleBirds)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Aves en la selección</div>
         </button>
 
         {/* KPI 5: Hembra */}
@@ -431,7 +439,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 mt-1">
             {formatInt(kpis.femaleBirds)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Aves en la selección</div>
         </button>
 
         {/* KPI 6: Reservado / Saca */}
@@ -440,7 +447,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-1">
             {formatInt(kpis.reservedBirds)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Aves reservadas en BD</div>
         </div>
 
         {/* KPI 7: Menos de 2,000 aves */}
@@ -458,7 +464,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
           <div className="text-2xl font-black font-mono tabular-nums text-violet-700 dark:text-violet-400 mt-1">
             {formatInt(kpis.lowStockBarns)}
           </div>
-          <div className="text-[10px] text-slate-400 mt-0.5">Galpones en la selección</div>
         </button>
       </div>
 
@@ -511,16 +516,6 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
             >
               <Download className="w-3.5 h-3.5" />
               <span>Exportar CSV</span>
-            </Button>
-
-            <Button
-              size="sm"
-              onClick={onRefresh}
-              disabled={refreshing}
-              className="h-9 px-4 text-xs font-extrabold bg-purple-700 hover:bg-purple-800 text-white flex items-center gap-1.5 shadow-xs"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span>Actualizar</span>
             </Button>
           </div>
         </div>
@@ -594,19 +589,17 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
 
           <div>
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">
-              Edad (días)
+              Edad / Prioridad
             </label>
             <select
               value={selectedAge}
-              onChange={(e) => setSelectedAge(e.target.value)}
+              onChange={(e) => setSelectedAge(e.target.value as 'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38')}
               className="h-9 w-full px-2.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-800 dark:text-slate-100"
             >
               <option value="ALL">Todas las edades</option>
-              {ageOptions.map((age) => (
-                <option key={age} value={String(age)}>
-                  {age} días
-                </option>
-              ))}
+              <option value="OVER_45">🚨 &gt; 45 días (Prioridad)</option>
+              <option value="RANGE_38_45">38 a 45 días (Saca)</option>
+              <option value="UNDER_38">&lt; 38 días (Crecimiento)</option>
             </select>
           </div>
 
@@ -650,7 +643,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
                   </td>
                 </tr>
               ) : (
-                filteredItems.map((item) => {
+                paginatedItems.map((item) => {
                   const avgKg = getAvgWeightKg(item);
                   const avgG = getAvgWeightG(item);
                   const reservedTotal = (item.reserved_count || 0) + (item.sold_pending_count || 0);
@@ -756,6 +749,49 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
             </tbody>
           </table>
         </div>
+
+        {/* Paginación (15 registros por página) */}
+        {filteredItems.length > 0 && (
+          <div className="px-5 py-3 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/40 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs">
+            <span className="text-slate-500 dark:text-slate-400">
+              Mostrando{' '}
+              <strong className="font-mono text-slate-800 dark:text-slate-200">
+                {(safePage - 1) * PAGE_SIZE + 1}–{Math.min(safePage * PAGE_SIZE, filteredItems.length)}
+              </strong>{' '}
+              de{' '}
+              <strong className="font-mono text-slate-800 dark:text-slate-200">
+                {filteredItems.length}
+              </strong>{' '}
+              galpones
+            </span>
+
+            <div className="flex items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={safePage <= 1}
+                className="h-8 px-2.5 text-xs font-bold"
+              >
+                <ChevronLeft className="w-3.5 h-3.5 mr-1" />
+                Anterior
+              </Button>
+              <span className="px-2.5 font-mono font-bold text-slate-700 dark:text-slate-200">
+                {safePage} / {totalPages}
+              </span>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage >= totalPages}
+                className="h-8 px-2.5 text-xs font-bold"
+              >
+                Siguiente
+                <ChevronRight className="w-3.5 h-3.5 ml-1" />
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* MODAL DE CONFIRMACIÓN PARA CERRAR GALPÓN */}

@@ -13,6 +13,7 @@ import {
   RotateCcw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
+import { KpiCard } from '@/components/ui/KpiCard';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { apiClient } from '@/lib/api';
@@ -590,41 +591,26 @@ export const ProgramacionSacaPanel: React.FC<ProgramacionSacaPanelProps> = ({
 
         {/* 4 KPI Cards */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 pt-1">
-          <div className="p-3.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 border-l-4 border-l-violet-600 flex items-baseline gap-2.5">
-            <span className="text-2xl font-black font-mono text-slate-950 dark:text-white">
-              {summaryKpis.totalBirds.toLocaleString()}
-            </span>
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Aves reservadas
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 border-l-4 border-l-blue-500 flex items-baseline gap-2.5">
-            <span className="text-2xl font-black font-mono text-slate-950 dark:text-white">
-              {summaryKpis.ordersCount}
-            </span>
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Pedidos
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 border-l-4 border-l-emerald-500 flex items-baseline gap-2.5">
-            <span className="text-2xl font-black font-mono text-slate-950 dark:text-white">
-              {summaryKpis.birdsWithoutTruck.toLocaleString()}
-            </span>
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Aves sin camión
-            </span>
-          </div>
-
-          <div className="p-3.5 rounded-xl bg-slate-50/70 dark:bg-slate-800/50 border border-slate-200/80 dark:border-slate-700 border-l-4 border-l-amber-500 flex items-baseline gap-2.5">
-            <span className="text-2xl font-black font-mono text-slate-950 dark:text-white">
-              {summaryKpis.ordersWithoutAris}
-            </span>
-            <span className="text-xs font-medium text-slate-500 dark:text-slate-400">
-              Pedidos sin ARIS
-            </span>
-          </div>
+          <KpiCard
+            title="Aves reservadas"
+            value={summaryKpis.totalBirds.toLocaleString()}
+            accent="violet"
+          />
+          <KpiCard
+            title="Pedidos"
+            value={summaryKpis.ordersCount}
+            accent="blue"
+          />
+          <KpiCard
+            title="Aves sin camión"
+            value={summaryKpis.birdsWithoutTruck.toLocaleString()}
+            accent="emerald"
+          />
+          <KpiCard
+            title="Pedidos sin ARIS"
+            value={summaryKpis.ordersWithoutAris}
+            accent="amber"
+          />
         </div>
 
         {/* Nota al pie + Toggle Ver gráficos */}

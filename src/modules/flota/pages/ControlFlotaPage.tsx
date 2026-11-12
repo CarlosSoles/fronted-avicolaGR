@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import { ModuleTabs } from '@/components/ui/ModuleTabs';
 import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
+import { KpiCard } from '@/components/ui/KpiCard';
 import {
   DateFilterValue,
   DEFAULT_DATE_FILTER,
@@ -65,7 +66,6 @@ function readCachedJson<T>(key: string): T[] | null {
   }
 }
 import { DispatchLifecycleStepper } from '@/modules/gerencia/components/dispatch/DispatchLifecycleStepper';
-import { DispatchPhasePipeline } from '@/modules/gerencia/components/dispatch/DispatchPhasePipeline';
 import { WhatsAppManifestModal } from '@/modules/gerencia/components/dispatch/WhatsAppManifestModal';
 import { ConsolidationCubicajeBar } from '@/modules/gerencia/components/dispatch/ConsolidationCubicajeBar';
 
@@ -144,7 +144,6 @@ export const ControlFlotaPage: React.FC = () => {
   // Filtros de Asignación de Transporte
   const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
   const [selectedZone, setSelectedZone] = useState<string>('ALL');
-  const [selectedPhaseFilter, setSelectedPhaseFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modales auxiliares
@@ -316,11 +315,6 @@ export const ControlFlotaPage: React.FC = () => {
       .filter((o) => matchesRange(orderDateKey(o, dateFilter.criterion), dateRange))
       .filter((o) => (selectedZone === 'ALL' ? true : o.zone_code === selectedZone))
       .filter((o) => {
-        if (selectedPhaseFilter === 'ALL') return true;
-        const currentPhase = o.dispatch_phase || (o.transport_assigned ? 'TRANSPORTE_ASIGNADO' : 'PENDIENTE');
-        return currentPhase === selectedPhaseFilter;
-      })
-      .filter((o) => {
         if (!q) return true;
         return (
           o.order_number.toLowerCase().includes(q) ||
@@ -330,7 +324,7 @@ export const ControlFlotaPage: React.FC = () => {
           (o.transport_driver_name || '').toLowerCase().includes(q)
         );
       });
-  }, [orders, dateFilter.criterion, dateRange, selectedZone, selectedPhaseFilter, searchQuery]);
+  }, [orders, dateFilter.criterion, dateRange, selectedZone, searchQuery]);
 
   const metrics = useMemo(() => {
     const approvedOrDispatched = orders.filter(
@@ -343,11 +337,15 @@ export const ControlFlotaPage: React.FC = () => {
     const inTransit = approvedOrDispatched.filter(
       (o) => o.dispatch_phase === 'EN_TRANSITO' || o.dispatch_phase === 'EN_GRANJA_CARGANDO'
     ).length;
+    const delivered = approvedOrDispatched.filter(
+      (o) => o.dispatch_phase === 'ENTREGADO_CONFORME'
+    ).length;
     const availableVehicles = vehicles.filter((v) => v.status === 'DISPONIBLE').length;
     return {
       pendingTransport,
       assigned,
       inTransit,
+      delivered,
       totalVehicles: vehicles.length,
       availableVehicles,
     };
@@ -807,62 +805,43 @@ export const ControlFlotaPage: React.FC = () => {
       {activeTab === 'despacho' && (
         <div className="space-y-4">
           {/* KPIs DE CONTROL DE FLOTA */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-amber-200 dark:border-amber-900/60 shadow-xs">
-              <div className="flex items-center justify-between text-amber-700 dark:text-amber-400 text-[10px] font-black uppercase tracking-wider">
-                <span>Por Asignar Camión</span>
-                <Clock className="w-4 h-4 text-amber-500" />
-              </div>
-              <div className="text-2xl font-black font-mono text-amber-700 dark:text-amber-400 mt-1">
-                {metrics.pendingTransport}
-              </div>
-              <div className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
-                Pedidos programados esperando unidad
-              </div>
-            </div>
-
-            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs">
-              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider">
-                <span>Con Unidad Asignada</span>
-                <PackageCheck className="w-4 h-4 text-emerald-500" />
-              </div>
-              <div className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 mt-1">
-                {metrics.assigned}
-              </div>
-              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
-                Sincronizados con Gestión Comercial
-              </div>
-            </div>
-
-            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-blue-200 dark:border-blue-900/60 shadow-xs">
-              <div className="flex items-center justify-between text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase tracking-wider">
-                <span>Carga / En Tránsito</span>
-                <MapPin className="w-4 h-4 text-blue-600" />
-              </div>
-              <div className="text-2xl font-black font-mono text-blue-700 dark:text-blue-400 mt-1">
-                {metrics.inTransit}
-              </div>
-              <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">
-                Unidades en granja o carretera
-              </div>
-            </div>
-
-            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-              <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider">
-                <span>Flota Registrada</span>
-                <Truck className="w-4 h-4 text-emerald-600" />
-              </div>
-              <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
-                {metrics.totalVehicles}
-              </div>
-              <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-                {metrics.availableVehicles} unidades disponibles
-              </div>
-            </div>
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+            <KpiCard
+              title="Por asignar camión"
+              value={metrics.pendingTransport}
+              subtitle="Pedidos programados esperando unidad"
+              accent="amber"
+            />
+            <KpiCard
+              title="Con unidad asignada"
+              value={metrics.assigned}
+              subtitle="Sincronizados con Gestión Comercial"
+              accent="emerald"
+            />
+            <KpiCard
+              title="Carga / En tránsito"
+              value={metrics.inTransit}
+              subtitle="Unidades en granja o carretera"
+              accent="blue"
+            />
+            <KpiCard
+              title="Entregado"
+              value={metrics.delivered}
+              subtitle="Entregados conforme en destino"
+              accent="teal"
+            />
+            <KpiCard
+              title="Flota registrada"
+              value={metrics.totalVehicles}
+              subtitle={`${metrics.availableVehicles} unidades disponibles`}
+              accent="slate"
+              className="col-span-2 md:col-span-1"
+            />
           </div>
-          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
+
+          <div className="bg-white dark:bg-slate-900 border border-slate-200/90 dark:border-slate-800 rounded-2xl shadow-xs overflow-hidden">
+            <div className="flex items-center gap-3 px-4 py-3.5 bg-gradient-to-r from-blue-50/80 via-slate-50/40 to-white dark:from-blue-950/30 dark:via-slate-900 dark:to-slate-900 border-b border-slate-100 dark:border-slate-800">
+              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0 shadow-xs">
                 <Truck className="w-5 h-5" />
               </div>
               <div>
@@ -875,37 +854,56 @@ export const ControlFlotaPage: React.FC = () => {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="relative">
-                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-2.5 px-4 py-3 bg-slate-50/70 dark:bg-slate-800/30">
+              <div className="relative flex-1 min-w-[240px]">
+                <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                 <Input
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar pedido, cliente o placa..."
-                  className="pl-8 h-8 text-xs w-52 bg-white dark:bg-slate-900"
+                  placeholder="Buscar por N° de pedido, cliente, granja, placa o chofer..."
+                  className="pl-9 h-9 text-xs w-full bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-700 rounded-xl shadow-2xs"
                 />
               </div>
-              <select
-                value={selectedZone}
-                onChange={(e) => setSelectedZone(e.target.value)}
-                className="h-8 px-2.5 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-slate-200"
-              >
-                <option value="ALL">Todas las zonas</option>
-                {ALL_ZONES.map((z) => (
-                  <option key={z} value={z}>
-                    Zona {z}
-                  </option>
-                ))}
-              </select>
-              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
+
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Zona
+                  </span>
+                  <select
+                    value={selectedZone}
+                    onChange={(e) => setSelectedZone(e.target.value)}
+                    className="h-9 px-3 text-xs bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-700 dark:text-slate-200 shadow-2xs"
+                  >
+                    <option value="ALL">Todas las zonas</option>
+                    {ALL_ZONES.map((z) => (
+                      <option key={z} value={z}>
+                        Zona {z}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="h-5 w-px bg-slate-200 dark:bg-slate-700 hidden sm:block" />
+
+                <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
+
+                {(searchQuery || selectedZone !== 'ALL' || dateFilter.preset !== 'ALL') && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery('');
+                      setSelectedZone('ALL');
+                      setDateFilter({ ...dateFilter, preset: 'ALL', from: '', to: '' });
+                    }}
+                    className="h-9 px-3 rounded-xl text-xs font-bold text-slate-600 dark:text-slate-300 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                  >
+                    Limpiar
+                  </button>
+                )}
+              </div>
             </div>
           </div>
-
-          <DispatchPhasePipeline
-            orders={orders}
-            selectedPhaseFilter={selectedPhaseFilter}
-            onSelectPhaseFilter={setSelectedPhaseFilter}
-          />
 
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {dispatchOrders.length === 0 ? (
