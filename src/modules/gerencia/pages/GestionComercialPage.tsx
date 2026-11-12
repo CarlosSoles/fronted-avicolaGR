@@ -246,13 +246,13 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
     fetchData();
   }, []);
 
-  // Sincronía automática con Control de Flota: sondeo silencioso y refresco al recuperar el foco
+  // Sincronía automática con Control de Flota: sondeo silencioso cada 45s y refresco al recuperar el foco
   useEffect(() => {
     const interval = setInterval(() => {
       if (!approvingOrder && !observingOrder) {
         fetchData(true);
       }
-    }, 12000);
+    }, 45000);
     const onFocus = () => fetchData(true);
     window.addEventListener('focus', onFocus);
     return () => {

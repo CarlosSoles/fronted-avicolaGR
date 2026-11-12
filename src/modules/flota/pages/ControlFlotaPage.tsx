@@ -180,13 +180,13 @@ export const ControlFlotaPage: React.FC = () => {
     fetchData();
   }, [fetchData]);
 
-  // Sondeo en segundo plano y al volver el foco para mantener sincronía en tiempo real con Gestión Comercial
+  // Sondeo ligero en segundo plano (cada 45s) para sincronizar con Gestión Comercial
   useEffect(() => {
     const interval = setInterval(() => {
       if (!transportingOrder && !vehicleModalOpen) {
         fetchData(true);
       }
-    }, 12000);
+    }, 45000);
     const onFocus = () => fetchData(true);
     window.addEventListener('focus', onFocus);
     return () => {

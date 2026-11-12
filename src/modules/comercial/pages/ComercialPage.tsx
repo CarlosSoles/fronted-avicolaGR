@@ -940,8 +940,7 @@ export const ComercialPage: React.FC = () => {
   /** Deriva el estado comercial de 7 valores a partir de los campos del pedido. */
   function deriveEstadoComercial(o: SalesOrder): EstadoComercial {
     if (o.status === 'CANCELADO') return 'CANCELADO';
-    if (o.dispatch_phase === 'ENTREGADO_CONFORME') return 'TERMINADO';
-    if (o.status === 'DESPACHADO' && o.dispatch_phase === 'ENTREGADO_CONFORME') return 'TERMINADO';
+    if (o.dispatch_phase === 'ENTREGADO_CONFORME' || o.status === 'DESPACHADO') return 'TERMINADO';
     if (o.dispatch_phase === 'EN_TRANSITO') return 'EN_RUTA';
     if (o.dispatch_phase === 'EN_GRANJA_CARGANDO' || (o.status === 'APROBADO_RESERVADO' && o.codigo_aris)) {
       // Confirmado (código Aris): el pedido tiene código Aris generado por el gestor

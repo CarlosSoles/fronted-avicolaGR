@@ -126,8 +126,8 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode }> = ({
       )
       .subscribe();
 
-    // Fallback por sondeo en caso de que Realtime no esté disponible
-    const timer = setInterval(load, 60000);
+    // Fallback por sondeo cada 3 minutos en caso de que Realtime no esté disponible
+    const timer = setInterval(load, 180000);
 
     return () => {
       clearInterval(timer);
