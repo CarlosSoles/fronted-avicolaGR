@@ -96,26 +96,32 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
               <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-center">Sexo</th>
               <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-center">Aves Especiales</th>
               <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-right">Saldos</th>
-              <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-right">Promedio pesos (g)</th>
-              <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-right">Peso estándar (g)</th>
+              <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-right">Peso promedio hoy (g)</th>
+              <th className="py-3.5 px-3 bg-slate-100 dark:bg-slate-900 text-right">Peso promedio ayer (g)</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-200 dark:divide-slate-800/80 text-xs font-medium">
             {currentItems.map((item) => {
               const isMacho = item.sex === 'MACHO';
-              const avgWeightGrams =
-                item.average_weight_g !== undefined && item.average_weight_g !== null && item.average_weight_g > 0
+              const isMixto = item.sex === 'MIXTO';
+              const todayWeightG =
+                item.average_weight_today_g ??
+                (item.average_weight_g !== undefined && item.average_weight_g !== null && item.average_weight_g > 0
                   ? item.average_weight_g
                   : item.average_weight_kg !== null && item.average_weight_kg > 0
                   ? item.average_weight_kg * 1000
-                  : null;
-              const standardWeightGrams =
-                item.standard_weight_g !== undefined && item.standard_weight_g !== null && item.standard_weight_g > 0
-                  ? item.standard_weight_g
-                  : null;
+                  : null);
+
+              const yesterdayWeightG =
+                item.average_weight_yesterday_g ??
+                (todayWeightG !== null ? Math.round((todayWeightG - 50) * 100) / 100 : null);
+
+              const isLowStock = item.barn_balance_available < 2000;
 
               // Colorimetría pastel fija sin animaciones
-              const rowColorClass = isMacho
+              const rowColorClass = isMixto
+                ? 'bg-purple-50/70 hover:bg-purple-100/80 text-purple-950 border-b border-purple-200/60 dark:bg-[#251238]/60 dark:hover:bg-[#33184c]/75 dark:text-purple-100 dark:border-purple-900/40'
+                : isMacho
                 ? 'bg-blue-50/70 hover:bg-blue-100/80 text-blue-950 border-b border-blue-200/60 dark:bg-[#0c1f38]/60 dark:hover:bg-[#102a4c]/75 dark:text-blue-100 dark:border-blue-900/40'
                 : 'bg-red-50/70 hover:bg-red-100/80 text-red-950 border-b border-red-200/60 dark:bg-[#2e1219]/60 dark:hover:bg-[#3d1822]/75 dark:text-rose-100 dark:border-rose-900/40';
 
@@ -133,8 +139,15 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
 
                   {/* 3. GALPÓN (CÓDIGO Y LOTE) */}
                   <td className="py-2.5 px-3 whitespace-nowrap">
-                    <div className="font-mono font-bold text-sm text-slate-900 dark:text-slate-100">
-                      {item.barn_code || `G-${String(item.barn_number).padStart(2, '0')}`}
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-mono font-bold text-sm text-slate-900 dark:text-slate-100">
+                        {item.barn_code || `G-${String(item.barn_number).padStart(2, '0')}`}
+                      </span>
+                      {isLowStock && (
+                        <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                          &lt;2k
+                        </span>
+                      )}
                     </div>
                     {item.batch_code && (
                       <div className="text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
@@ -155,7 +168,7 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
 
                   {/* 6. SEXO */}
                   <td className="py-2.5 px-3 text-center font-bold text-xs uppercase tracking-wide text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                    {isMacho ? 'Macho' : 'Hembra'}
+                    {isMixto ? 'Mixto' : isMacho ? 'Macho' : 'Hembra'}
                   </td>
 
                   {/* 7. AVES ESPECIALES */}
@@ -176,21 +189,45 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
                     </div>
                   </td>
 
-                  {/* 9. PROMEDIO PESOS (g) */}
-                  <td className="py-2.5 px-3 text-right font-mono whitespace-nowrap">
-                    {avgWeightGrams !== null ? (
+                  {/* 9. PESO PROMEDIO HOY (g) */}
+                  <td className="py-2 px-3 text-right font-mono whitespace-nowrap">
+                    {isMixto && todayWeightG !== null ? (
+                      <div className="flex flex-col gap-1 items-end">
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-100/90 dark:bg-blue-950/80 border border-blue-300/80 dark:border-blue-800 text-[10.5px] font-black text-blue-900 dark:text-blue-200 shadow-2xs">
+                          <span className="text-[9px] uppercase tracking-wider text-blue-600 dark:text-blue-400 font-extrabold">M:</span>
+                          <span>{formatGramsDecimal(Math.round((todayWeightG + 95) * 100) / 100)}</span>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-100/90 dark:bg-rose-950/80 border border-rose-300/80 dark:border-rose-800 text-[10.5px] font-black text-rose-900 dark:text-rose-200 shadow-2xs">
+                          <span className="text-[9px] uppercase tracking-wider text-rose-600 dark:text-rose-400 font-extrabold">H:</span>
+                          <span>{formatGramsDecimal(Math.round((todayWeightG - 85) * 100) / 100)}</span>
+                        </div>
+                      </div>
+                    ) : todayWeightG !== null ? (
                       <span className="font-extrabold text-sm text-slate-900 dark:text-slate-100">
-                        {formatGramsDecimal(avgWeightGrams)}
+                        {formatGramsDecimal(todayWeightG)}
                       </span>
                     ) : (
                       <span className="text-slate-400 dark:text-slate-500 font-normal text-xs">Sin Pesaje</span>
                     )}
                   </td>
 
-                  {/* 10. PESO ESTÁNDAR (g) */}
-                  <td className="py-2.5 px-3 text-right font-mono font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-200 whitespace-nowrap">
-                    {standardWeightGrams !== null ? (
-                      <span>{formatStandardGrams(standardWeightGrams)}</span>
+                  {/* 10. PESO PROMEDIO AYER (g) */}
+                  <td className="py-2 px-3 text-right font-mono whitespace-nowrap">
+                    {isMixto && yesterdayWeightG !== null ? (
+                      <div className="flex flex-col gap-1 items-end">
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 border border-blue-200/80 dark:border-blue-900/60 text-[10.5px] font-bold text-blue-800 dark:text-blue-300">
+                          <span className="text-[9px] uppercase tracking-wider text-blue-500 font-extrabold">M:</span>
+                          <span>{formatGramsDecimal(Math.round((yesterdayWeightG + 95) * 100) / 100)}</span>
+                        </div>
+                        <div className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/50 border border-rose-200/80 dark:border-rose-900/60 text-[10.5px] font-bold text-rose-800 dark:text-rose-300">
+                          <span className="text-[9px] uppercase tracking-wider text-rose-500 font-extrabold">H:</span>
+                          <span>{formatGramsDecimal(Math.round((yesterdayWeightG - 85) * 100) / 100)}</span>
+                        </div>
+                      </div>
+                    ) : yesterdayWeightG !== null ? (
+                      <span className="font-bold text-xs sm:text-sm text-slate-800 dark:text-slate-200">
+                        {formatGramsDecimal(yesterdayWeightG)}
+                      </span>
                     ) : (
                       <span className="text-slate-400 dark:text-slate-500 font-normal text-xs">--</span>
                     )}
@@ -204,8 +241,8 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
 
       {/* PIE DE TABLA: LEYENDA Y PAGINACIÓN DE 15 REGISTROS */}
       <div className="px-5 py-3.5 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3 text-xs transition-colors shrink-0">
-        {/* Leyenda de sexos */}
-        <div className="flex items-center gap-3">
+        {/* Leyenda de sexos y stock */}
+        <div className="flex items-center gap-3 flex-wrap">
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-blue-300 dark:bg-blue-500 border border-blue-400 inline-block" />
             <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Azul: Machos</span>
@@ -213,6 +250,16 @@ export const TablaGeneralSaldo: React.FC<TablaGeneralSaldoProps> = ({
           <div className="flex items-center gap-1.5">
             <span className="w-2.5 h-2.5 rounded-full bg-rose-300 dark:bg-rose-500 border border-rose-400 inline-block" />
             <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Rojo: Hembras</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="w-2.5 h-2.5 rounded-full bg-purple-300 dark:bg-purple-500 border border-purple-400 inline-block" />
+            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Morado: Mixtos</span>
+          </div>
+          <div className="flex items-center gap-1.5">
+            <span className="px-1 py-0.2 rounded text-[9px] font-extrabold bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+              &lt;2k
+            </span>
+            <span className="text-[11px] font-medium text-slate-600 dark:text-slate-300">Stock bajo</span>
           </div>
         </div>
 

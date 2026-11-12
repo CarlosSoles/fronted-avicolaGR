@@ -1,4 +1,4 @@
-export type SexType = 'MACHO' | 'HEMBRA';
+export type SexType = 'MACHO' | 'HEMBRA' | 'MIXTO';
 
 export type BarnStatus = 'OPERATIVO' | 'BLOQUEADO_SANITARIO' | 'PENDIENTE_REVISION' | 'CERRADO';
 
@@ -93,11 +93,13 @@ export interface TablaGeneralSaldoItem {
   barn_balance_available: number;
   average_weight_kg: number | null;
   average_weight_g?: number | null;
+  average_weight_today_g?: number | null;
+  average_weight_yesterday_g?: number | null;
   standard_weight_g?: number | null;
   min_weight_kg?: number | null;
   max_weight_kg?: number | null;
   weight_range_label?: string | null;
-  sex: SexType; // Solo 'MACHO' o 'HEMBRA'
+  sex: SexType; // 'MACHO' | 'HEMBRA' | 'MIXTO'
   
   // Desglose físico
   physical_count: number;
@@ -119,37 +121,42 @@ export function generateInitialOfficialData(): TablaGeneralSaldoItem[] {
   OFFICIAL_FARMS.forEach((farm, farmIdx) => {
     for (let b = 1; b <= 10; b++) {
       const barnCode = `G-${String(b).padStart(2, '0')}`;
-      // Alternar sexos (solo MACHO y HEMBRA, sin mixto)
-      const isMacho = (farmIdx + b) % 2 === 0;
-      const sex = isMacho ? 'MACHO' : 'HEMBRA';
+      // 20% MIXTO, 40% MACHO, 40% HEMBRA
+      let sex: SexType = 'MACHO';
+      if (b === 1 || b === 6) {
+        sex = 'MIXTO';
+      } else if ((farmIdx + b) % 2 === 0) {
+        sex = 'MACHO';
+      } else {
+        sex = 'HEMBRA';
+      }
 
-      // Galpones > 45 días para prioridad de cierre
-      let age = 36 + ((farmIdx * 3 + b * 2) % 10);
-      if (b === 1 && farmIdx % 2 === 0) age = 47;
-      if (b === 3 && farmIdx % 3 === 0) age = 46;
-      if (b === 5 && farmIdx % 4 === 0) age = 48;
+      // Edades en los 3 rangos: 32-35, 36-39, 40-41
+      const rangeMod = (farmIdx + b) % 3;
+      let age = 38;
+      if (rangeMod === 0) age = 32 + ((farmIdx * 2 + b) % 4); // 32..35
+      else if (rangeMod === 1) age = 36 + ((farmIdx * 3 + b) % 4); // 36..39
+      else age = 40 + ((farmIdx + b) % 2); // 40..41
 
-      const baseWeight = isMacho ? 2.60 + (b * 0.03) : 2.35 + (b * 0.02);
+      const baseWeight = sex === 'MACHO' ? 2.65 + (b * 0.03) : sex === 'HEMBRA' ? 2.35 + (b * 0.02) : 2.50 + (b * 0.025);
       const roundedAvg = Math.round(baseWeight * 100) / 100;
       const minW = Math.round((roundedAvg - 0.16) * 100) / 100;
       const maxW = Math.round((roundedAvg + 0.18) * 100) / 100;
 
-      let physical = 5000 + (b * 200);
-      let specials = 40 + ((b * 15) % 90);
-      let reserved = (b % 3 === 0) ? 100 : 0;
+      // Saldo mayor a 10,000 aves (excepto galpón 10 que tiene < 2,000 aves para control de stock bajo)
+      let physical = 10500 + ((b * 600) % 6000);
+      let specials = 45 + ((b * 15) % 90);
+      let reserved = (b % 4 === 0) ? 200 : 0;
 
-      if (b === 9 || b === 10) {
-        physical = 920;
-        specials = 45;
+      if (b === 10) {
+        physical = 1450;
+        specials = 40;
         reserved = 0;
       }
 
       const available = Math.max(0, physical - specials - reserved);
-      const baseWeightG = isMacho
-        ? 2589 + Math.max(0, age - 42) * 38 - Math.pow(Math.max(0, age - 42), 1.45) * 0.45
-        : 2184 + Math.max(0, age - 42) * 28 - Math.pow(Math.max(0, age - 42), 1.4) * 0.45;
-      const standardWeightG = Math.round(baseWeightG);
-      const avgWeightG = Math.round((standardWeightG * (0.96 + ((farmIdx * 7 + b * 13) % 9) * 0.01) + 0.37) * 100) / 100;
+      const todayG = Math.round((roundedAvg * 1000 + ((farmIdx * 5 + b * 11) % 40)) * 100) / 100;
+      const yesterdayG = Math.round((todayG - 52 + ((farmIdx + b) % 15)) * 100) / 100;
 
       items.push({
         farm_id: `farm-uuid-${farm.code.toLowerCase()}`,
@@ -166,8 +173,9 @@ export function generateInitialOfficialData(): TablaGeneralSaldoItem[] {
         specials_general_count: specials,
         barn_balance_available: available,
         average_weight_kg: roundedAvg,
-        average_weight_g: avgWeightG,
-        standard_weight_g: standardWeightG,
+        average_weight_g: todayG,
+        average_weight_today_g: todayG,
+        average_weight_yesterday_g: yesterdayG,
         min_weight_kg: minW,
         max_weight_kg: maxW,
         weight_range_label: `${minW.toFixed(2)} - ${maxW.toFixed(2)} kg`,

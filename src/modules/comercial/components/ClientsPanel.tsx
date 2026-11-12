@@ -13,6 +13,7 @@ import { Modal } from '@/components/ui/Modal';
 import { Button } from '@/components/ui/Button';
 import { apiClient } from '@/lib/api';
 import { Client, ClientCreatePayload, ClientUpdatePayload } from '@/types/comercial';
+import { sanitizePeruCoordinates } from '@/modules/gerencia/components/gps/gpsRoutesData';
 
 interface ClientFormState {
   business_name: string;
@@ -151,15 +152,21 @@ export const ClientsPanel: React.FC = () => {
         setFormError('Debe ingresar latitud y longitud juntas, o dejar ambas vacías.');
         return;
       }
-      latitude = Number(latStr);
-      longitude = Number(lngStr);
-      if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
-        setFormError('La latitud debe ser un número entre -90 y 90.');
-        return;
-      }
-      if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
-        setFormError('La longitud debe ser un número entre -180 y 180.');
-        return;
+      const sanitized = sanitizePeruCoordinates(latStr, lngStr);
+      if (sanitized) {
+        latitude = sanitized.lat;
+        longitude = sanitized.lng;
+      } else {
+        latitude = Number(latStr);
+        longitude = Number(lngStr);
+        if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+          setFormError('La latitud debe ser un número entre -90 y 90.');
+          return;
+        }
+        if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+          setFormError('La longitud debe ser un número entre -180 y 180.');
+          return;
+        }
       }
     }
 

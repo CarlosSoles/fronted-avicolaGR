@@ -26,25 +26,24 @@ export const PecuariaDashboardPage: React.FC = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Filtros (Sin operativo ni bloqueado, sin mixto)
+  // Filtros
   const [selectedFarmCode, setSelectedFarmCode] = useState<string>('ALL');
   const [selectedSex, setSelectedSex] = useState<string>('ALL');
   const [selectedThreshold, setSelectedThreshold] = useState<'ALL' | 'PLUS_1000' | 'MINUS_1000'>('ALL');
   const [selectedAgeFilter, setSelectedAgeFilter] = useState<'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
+  const [hasNewIngestion, setHasNewIngestion] = useState<boolean>(false);
 
   const fetchData = useCallback(async () => {
     setIsLoading(true);
     try {
-      const queryParams = new URLSearchParams();
-      if (selectedSex !== 'ALL') queryParams.append('sex', selectedSex);
-
+      // Obtenemos siempre el inventario general completo para alimentar correctamente los KPIs y permitir filtrado ágil
       const res = await apiClient<TablaGeneralSaldoResponse>(
-        `/pecuaria/tabla-general-saldo?${queryParams.toString()}`
+        '/pecuaria/tabla-general-saldo'
       );
-      // Filtrar solo sexo MACHO o HEMBRA (sin mixto) y que no estén cerrados
+      // Incluir MACHO, HEMBRA y MIXTO (que no estén cerrados)
       const sanitized = (res?.data || [])
-        .filter((d) => (d.sex === 'MACHO' || d.sex === 'HEMBRA') && !d.is_closed)
+        .filter((d) => (d.sex === 'MACHO' || d.sex === 'HEMBRA' || d.sex === 'MIXTO') && !d.is_closed)
         .map((d) => ({
           ...d,
           farm_code: d.farm_code || d.farm_name.substring(0, 5).toUpperCase(),
@@ -54,25 +53,26 @@ export const PecuariaDashboardPage: React.FC = () => {
         }));
       setData(sanitized);
       setLoadError(null);
+      setHasNewIngestion(false);
     } catch (err: any) {
       console.warn('Error cargando la Tabla General de Saldo:', err);
       setLoadError(err?.message || 'No se pudo conectar con el servidor.');
     } finally {
       setIsLoading(false);
     }
-  }, [selectedSex]);
+  }, []);
 
   useEffect(() => {
     fetchData();
 
-    // Suscripción Realtime para cambios de inventario
+    // Suscripción Realtime para detectar nueva ingesta / cambios de inventario
     const channel = supabase
       .channel('schema-db-changes')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'barn_inventories' },
         () => {
-          fetchData();
+          setHasNewIngestion(true);
         }
       )
       .subscribe();
@@ -152,16 +152,31 @@ export const PecuariaDashboardPage: React.FC = () => {
     });
   }, [data, selectedFarmCode, selectedSex, selectedThreshold, selectedAgeFilter, searchQuery]);
 
-  // KPIs Calculados (Total Físico, Especiales, Saldo Neto Disponible y Saldos por Sexo)
-  const totalPhysicalCount = filteredData.reduce((acc, curr) => acc + curr.physical_count, 0);
-  const totalSpecials = filteredData.reduce((acc, curr) => acc + curr.specials_general_count, 0);
+  // Base para los KPIs ejecutivos: responde a la Granja seleccionada pero mantiene visibles los totales de cada sexo
+  const kpiData = useMemo(() => {
+    return data.filter((item) => {
+      if (item.is_closed) return false;
+      if (selectedFarmCode !== 'ALL' && item.farm_code !== selectedFarmCode) {
+        return false;
+      }
+      return true;
+    });
+  }, [data, selectedFarmCode]);
+
+  // KPIs Calculados (Total Físico, Especiales, Saldo Neto Disponible, Saldos por Sexo y Stock Bajo)
+  const totalPhysicalCount = kpiData.reduce((acc, curr) => acc + curr.physical_count, 0);
+  const totalSpecials = kpiData.reduce((acc, curr) => acc + curr.specials_general_count, 0);
   const totalNetSaca = Math.max(0, totalPhysicalCount - totalSpecials);
-  const totalSaldoMachos = filteredData
+  const totalSaldoMachos = kpiData
     .filter((i) => i.sex === 'MACHO')
     .reduce((acc, curr) => acc + curr.barn_balance_available, 0);
-  const totalSaldoHembras = filteredData
+  const totalSaldoHembras = kpiData
     .filter((i) => i.sex === 'HEMBRA')
     .reduce((acc, curr) => acc + curr.barn_balance_available, 0);
+  const totalSaldoMixtos = kpiData
+    .filter((i) => i.sex === 'MIXTO')
+    .reduce((acc, curr) => acc + curr.barn_balance_available, 0);
+  const totalGalponesBajoStock = kpiData.filter((i) => i.barn_balance_available < 2000).length;
 
   return (
     <div className="space-y-6">
@@ -191,10 +206,21 @@ export const PecuariaDashboardPage: React.FC = () => {
             size="sm"
             onClick={fetchData}
             isLoading={isLoading}
-            className="w-full sm:w-auto justify-center border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 font-bold"
+            className={`w-full sm:w-auto justify-center border font-bold transition-all ${
+              hasNewIngestion
+                ? 'border-amber-400 dark:border-amber-500 bg-amber-50 dark:bg-amber-950/40 text-amber-900 dark:text-amber-200 ring-2 ring-amber-400 ring-offset-1'
+                : 'border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 hover:bg-slate-100 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200'
+            }`}
           >
-            <RotateCcw className="w-4 h-4 mr-1.5" />
-            Actualizar
+            {hasNewIngestion ? (
+              <span className="relative flex h-2 w-2 mr-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500"></span>
+              </span>
+            ) : (
+              <RotateCcw className="w-4 h-4 mr-1.5" />
+            )}
+            <span>{hasNewIngestion ? 'Nuevos registros disponibles — Actualizar' : 'Actualizar'}</span>
           </Button>
         </div>
       </div>
@@ -237,38 +263,42 @@ export const PecuariaDashboardPage: React.FC = () => {
       ) : (
         <>
 
-      {/* 1. TARJETAS DE KPIS: 5 TARJETAS BALANCEADAS (TOTAL, ESPECIALES, DISPONIBLE SACA, MACHOS, HEMBRAS) */}
-      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+      {/* 1. TARJETAS DE KPIS: 7 TARJETAS LIMPIAS SIN SUBTÍTULOS */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-7 gap-3">
         <KpiCard
           title="Saldo de aves"
           value={totalPhysicalCount.toLocaleString()}
-          subtitle="Población total en granjas"
           accent="violet"
         />
         <KpiCard
           title="Saldo especiales"
           value={totalSpecials.toLocaleString()}
-          subtitle="Aves con defectos descontadas"
           accent="amber"
         />
         <KpiCard
           title="Disponible saca"
           value={totalNetSaca.toLocaleString()}
-          subtitle="Total aves - especiales"
           accent="emerald"
         />
         <KpiCard
           title="Saldo machos"
           value={totalSaldoMachos.toLocaleString()}
-          subtitle="Aves disponibles libres"
           accent="blue"
         />
         <KpiCard
           title="Saldo hembras"
           value={totalSaldoHembras.toLocaleString()}
-          subtitle="Aves disponibles libres"
           accent="rose"
-          className="col-span-2 md:col-span-1"
+        />
+        <KpiCard
+          title="Saldo mixtos"
+          value={totalSaldoMixtos.toLocaleString()}
+          accent="violet"
+        />
+        <KpiCard
+          title="Galpones < 2,000"
+          value={totalGalponesBajoStock.toLocaleString()}
+          accent="amber"
         />
       </div>
 
@@ -376,6 +406,7 @@ export const PecuariaDashboardPage: React.FC = () => {
               <option value="ALL">Todos los Sexos</option>
               <option value="MACHO">Solo Machos</option>
               <option value="HEMBRA">Solo Hembras</option>
+              <option value="MIXTO">Solo Mixtos</option>
             </select>
           </div>
 

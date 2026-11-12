@@ -14,6 +14,7 @@ import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
 import { KpiCard } from '@/components/ui/KpiCard';
 import { LazyFlotaGpsMap as FlotaGpsMap } from '@/modules/gerencia/components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
+import { sanitizePeruCoordinates } from '@/modules/gerencia/components/gps/gpsRoutesData';
 import {
   DateFilterValue,
   DEFAULT_DATE_FILTER,
@@ -152,10 +153,16 @@ export const ComercialPage: React.FC = () => {
 
   const handleParseDeliveryCoords = (input: string) => {
     setRawCoordsInput(input);
-    const match = input.match(/(-?\d+\.\d+)[,\s]+(-?\d+\.\d+)/);
+    const match = input.match(/(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)/);
     if (match) {
-      setDeliveryLat(match[1]);
-      setDeliveryLng(match[2]);
+      const sanitized = sanitizePeruCoordinates(match[1], match[2]);
+      if (sanitized) {
+        setDeliveryLat(String(sanitized.lat));
+        setDeliveryLng(String(sanitized.lng));
+      } else {
+        setDeliveryLat(match[1]);
+        setDeliveryLng(match[2]);
+      }
     }
   };
 
@@ -271,7 +278,7 @@ export const ComercialPage: React.FC = () => {
         const rawList = pecuariaRes.value?.data || pecuariaRes.value?.items;
         if (rawList && Array.isArray(rawList) && rawList.length > 0) {
           const sanitized = rawList
-            .filter((d: any) => (d.sex === 'MACHO' || d.sex === 'HEMBRA') && !d.is_closed)
+            .filter((d: any) => (d.sex === 'MACHO' || d.sex === 'HEMBRA' || d.sex === 'MIXTO') && !d.is_closed)
             .map((d: any) => ({
               ...d,
               farm_code: d.farm_code || d.farm_name?.substring(0, 5).toUpperCase(),
@@ -370,8 +377,14 @@ export const ComercialPage: React.FC = () => {
   // Aplica a la entrega del pedido la dirección y coordenadas registradas en la ficha del cliente
   const applyClientDeliveryData = (c: Client) => {
     setDeliveryAddress(c.address || '');
-    setDeliveryLat(c.latitude !== null && c.latitude !== undefined ? String(c.latitude) : '');
-    setDeliveryLng(c.longitude !== null && c.longitude !== undefined ? String(c.longitude) : '');
+    const sanitized = sanitizePeruCoordinates(c.latitude, c.longitude);
+    if (sanitized) {
+      setDeliveryLat(String(sanitized.lat));
+      setDeliveryLng(String(sanitized.lng));
+    } else {
+      setDeliveryLat(c.latitude !== null && c.latitude !== undefined ? String(c.latitude) : '');
+      setDeliveryLng(c.longitude !== null && c.longitude !== undefined ? String(c.longitude) : '');
+    }
     setRawCoordsInput('');
   };
 
@@ -442,15 +455,21 @@ export const ComercialPage: React.FC = () => {
         setNewClientError('Debe ingresar latitud y longitud juntas para fijar el punto de entrega.');
         return;
       }
-      lat = parseFloat(latStr);
-      lng = parseFloat(lngStr);
-      if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
-        setNewClientError('La latitud debe ser un número entre -90 y 90.');
-        return;
-      }
-      if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
-        setNewClientError('La longitud debe ser un número entre -180 y 180.');
-        return;
+      const sanitized = sanitizePeruCoordinates(latStr, lngStr);
+      if (sanitized) {
+        lat = sanitized.lat;
+        lng = sanitized.lng;
+      } else {
+        lat = parseFloat(latStr);
+        lng = parseFloat(lngStr);
+        if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+          setNewClientError('La latitud debe ser un número entre -90 y 90.');
+          return;
+        }
+        if (!Number.isFinite(lng) || lng < -180 || lng > 180) {
+          setNewClientError('La longitud debe ser un número entre -180 y 180.');
+          return;
+        }
       }
     }
 
@@ -598,6 +617,8 @@ export const ComercialPage: React.FC = () => {
       const uniqueSex = new Set(builtLines.map((l) => l.sex_preference));
       const sexSummary: SexPreference = uniqueSex.size === 1 ? Array.from(uniqueSex)[0] : 'MIXTO';
 
+      const sanitizedOrderCoords = sanitizePeruCoordinates(deliveryLat, deliveryLng);
+
       const payload: OrderCreatePayload = {
         client_id: selectedClientId || undefined,
         client_name: clientName.trim(),
@@ -611,8 +632,8 @@ export const ComercialPage: React.FC = () => {
         max_weight_kg: Math.max(...builtLines.map((l) => l.max_weight_kg)),
         sex_preference: sexSummary,
         delivery_address: deliveryAddress.trim() || undefined,
-        delivery_latitude: deliveryLat ? parseFloat(deliveryLat) : null,
-        delivery_longitude: deliveryLng ? parseFloat(deliveryLng) : null,
+        delivery_latitude: sanitizedOrderCoords ? sanitizedOrderCoords.lat : (deliveryLat ? parseFloat(deliveryLat) : null),
+        delivery_longitude: sanitizedOrderCoords ? sanitizedOrderCoords.lng : (deliveryLng ? parseFloat(deliveryLng) : null),
         order_lines: builtLines,
         is_draft: isDraft,
       };
@@ -716,6 +737,21 @@ export const ComercialPage: React.FC = () => {
       alert(err.message || 'Error al aprobar el pedido.');
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  // Cierre formal de galpón por el Gestor Comercial (Fin de saca / liquidación)
+  const handleCloseBarn = async (barnId: string, farmCode: string, barnCode: string) => {
+    if (!confirm(`¿Estás seguro de cerrar formalmente el galpón [${farmCode} - ${barnCode}] por fin de saca? Se notificará al módulo de Pecuaria.`)) {
+      return;
+    }
+    try {
+      await apiClient(`/pecuaria/barns/${barnId}/close`, { method: 'PATCH' });
+      showToast(`✔ Galpón [${farmCode} - ${barnCode}] cerrado. Se notificó a Pecuaria.`);
+      setOkModalOpen(false);
+      loadInitialData();
+    } catch (err: any) {
+      alert(err.message || 'Error al cerrar el galpón.');
     }
   };
 
@@ -2083,8 +2119,38 @@ export const ComercialPage: React.FC = () => {
                     <span className="text-emerald-700 dark:text-emerald-400 font-black text-xs">
                       Saldo Libre: {okBarnAvailability.barn_balance_available.toLocaleString()} aves
                     </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Peso hoy: <strong>{okBarnAvailability.average_weight_today_g ?? okBarnAvailability.average_weight_g ?? '--'} g</strong>
+                    </span>
+                    <span className="text-slate-600 dark:text-slate-400">
+                      Peso ayer: <strong>{okBarnAvailability.average_weight_yesterday_g ?? '--'} g</strong>
+                    </span>
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-bold uppercase bg-slate-200 dark:bg-slate-700 text-slate-800 dark:text-slate-200">
+                      Sexo: {okBarnAvailability.sex}
+                    </span>
+                    {okBarnAvailability.barn_balance_available < 2000 && (
+                      <span className="px-1.5 py-0.5 rounded text-[10px] font-black uppercase bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                        Stock bajo (&lt; 2,000 aves)
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* Si el galpón está con saldo bajo o listo para liquidar, botón de cierre formal */}
+                {okBarnAvailability.barn_balance_available < 2000 && (
+                  <div className="p-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 rounded-lg flex items-center justify-between gap-2 text-xs">
+                    <span className="text-amber-900 dark:text-amber-200 font-bold">
+                      Galpón con saldo residual ({okBarnAvailability.barn_balance_available.toLocaleString()} aves). ¿Deseas cerrarlo formalmente?
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCloseBarn(okBarnAvailability.barn_id, okFarmCode, okBarnCode)}
+                      className="px-2.5 py-1 text-[11px] font-black bg-rose-600 hover:bg-rose-700 text-white rounded-md whitespace-nowrap shadow-xs"
+                    >
+                      Cerrar Galpón (Fin de Saca)
+                    </button>
+                  </div>
+                )}
 
                 {/* Advertencia si la cantidad a reservar supera el saldo disponible */}
                 {(parseInt(okAllocatedQtyStr, 10) || 0) > okBarnAvailability.barn_balance_available && (
@@ -2107,9 +2173,11 @@ export const ComercialPage: React.FC = () => {
                   </div>
                 )}
 
-                {/* Advertencia de Incompatibilidad de Sexo */}
+                {/* Advertencia de Incompatibilidad de Sexo (Un galpón MIXTO es compatible con Macho y Hembra) */}
                 {selectedOrderForAction.sex_preference &&
                   selectedOrderForAction.sex_preference !== 'INDISTINTO' &&
+                  selectedOrderForAction.sex_preference !== 'MIXTO' &&
+                  okBarnAvailability.sex !== 'MIXTO' &&
                   okBarnAvailability.sex !== selectedOrderForAction.sex_preference && (
                     <div className="p-2 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-lg flex items-center gap-1.5 text-xs text-rose-900 dark:text-rose-200 font-bold">
                       <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0" />

@@ -36,6 +36,54 @@ export function calculateBearing(c1: GpsCoordinate, c2: GpsCoordinate): number {
 }
 
 /**
+ * Valida y sanitiza coordenadas para Perú / Lima.
+ * - Detecta y corrige inversión de latitud y longitud (cuando se copia longitud primero).
+ * - Corrige errores tipográficos conocidos (ej: -78.x en Lima que cae en el mar en vez de -76.x).
+ * - Asegura que el punto esté en tierra firme dentro de los límites geográficos de Perú.
+ */
+export function sanitizePeruCoordinates(
+  latInput: number | string | null | undefined,
+  lngInput: number | string | null | undefined
+): GpsCoordinate | null {
+  if (latInput === null || latInput === undefined || lngInput === null || lngInput === undefined) {
+    return null;
+  }
+  let lat = Number(latInput);
+  let lng = Number(lngInput);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || (lat === 0 && lng === 0)) {
+    return null;
+  }
+
+  // Corregir signos si se ingresaron positivos (Perú está en hemisferio Sur y Oeste)
+  if (lat > 0 && lat <= 20) lat = -lat;
+  if (lng > 0 && lng >= 60 && lng <= 90) lng = -lng;
+
+  // Detección de inversión de Latitud / Longitud:
+  // En Perú la latitud está entre -0.03 y -18.5 (aprox. -12 en Lima).
+  // La longitud está entre -68.5 y -81.5 (aprox. -77 en Lima).
+  if (lat < -55 && lng > -25) {
+    const temp = lat;
+    lat = lng;
+    lng = temp;
+  }
+
+  // Detección de error tipográfico de longitud en el mar de Lima/Callao (-78.xx en vez de -76.xx)
+  if (lat >= -13 && lat <= -11 && lng < -78.0 && lng > -79.5) {
+    lng = lng + 2.0;
+  }
+
+  // Validar límites de territorio peruano (-19 a 0 latitud, -82 a -68 longitud)
+  if (lat < -19 || lat > 0 || lng < -82 || lng > -68) {
+    return null;
+  }
+
+  return {
+    lat: Number(lat.toFixed(6)),
+    lng: Number(lng.toFixed(6)),
+  };
+}
+
+/**
  * RUTAS VIALES REALES OBTENIDAS DE OSRM (OPEN SOURCE ROUTING MACHINE)
  * Siguen al 100% el asfalto de carreteras, puentes, rampas y avenidas de Lima.
  */
@@ -221,15 +269,8 @@ export function createSimulatedTruckFromOrder(order: any, existingTruck?: Simula
   const barnCode = order.assigned_barn_code || order.suggested_barn_code || 'G-01';
 
   const farmOrigin: GpsCoordinate = getFarmOriginCoordinate(farmCode) || templatePath[0];
-  const hasClientCoord =
-    Number.isFinite(Number(order.delivery_latitude)) &&
-    Number.isFinite(Number(order.delivery_longitude)) &&
-    Number(order.delivery_latitude) !== 0 &&
-    Number(order.delivery_longitude) !== 0;
-
-  const clientDest: GpsCoordinate = hasClientCoord
-    ? { lat: Number(order.delivery_latitude), lng: Number(order.delivery_longitude) }
-    : templatePath[templatePath.length - 1];
+  const validCoord = sanitizePeruCoordinates(order.delivery_latitude, order.delivery_longitude);
+  const clientDest: GpsCoordinate = validCoord || templatePath[templatePath.length - 1];
 
   const cachedOsrm = getCachedOsrmRoute(farmOrigin, clientDest);
   const existingMatchesEndpoints =

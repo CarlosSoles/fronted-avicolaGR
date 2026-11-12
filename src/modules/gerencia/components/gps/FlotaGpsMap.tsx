@@ -293,10 +293,25 @@ export const FlotaGpsMap: React.FC<FlotaGpsMapProps> = ({
           truckMarker,
         };
       } else {
+        // Actualizar posición de camión
         layers.truckMarker.setLatLng([truck.currentCoord.lat, truck.currentCoord.lng]);
         layers.truckMarker.setIcon(
           createTruckIcon(truck.plate, truck.routeColor, bearing, truck.isPlaying)
         );
+
+        // Actualizar marcadores de origen y destino si cambiaron las coordenadas
+        const originCoord = truck.waypoints[0];
+        const destCoord = truck.waypoints[truck.waypoints.length - 1];
+        if (originCoord) {
+          layers.originMarker.setLatLng([originCoord.lat, originCoord.lng]);
+        }
+        if (destCoord) {
+          layers.destMarker.setLatLng([destCoord.lat, destCoord.lng]);
+        }
+
+        // Actualizar polilínea de ruta completa y tramo completado
+        const allCoords = truck.fullPath.map((p) => [p.lat, p.lng] as [number, number]);
+        layers.basePoly.setLatLngs(allCoords);
 
         const completedCoords = truck.fullPath
           .slice(0, truck.currentIndex + 1)

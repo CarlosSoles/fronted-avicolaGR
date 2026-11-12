@@ -212,17 +212,24 @@ export const GalponesView: React.FC<GalponesViewProps> = ({ data, isLoading }) =
               <span className="px-2 py-0.5 rounded-lg bg-white/80 dark:bg-slate-800 text-[10px] font-black font-mono text-slate-800 dark:text-slate-100 border border-slate-200 dark:border-slate-700">
                 {barn.farm_code} · {barn.barn_code}
               </span>
-              <span
-                className={`px-2 py-0.5 rounded-lg text-[9.5px] font-black uppercase ${
-                  barn.barn_status !== 'OPERATIVO'
-                    ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
-                    : barn.bird_age_days > 45
-                    ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
-                    : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
-                }`}
-              >
-                {STATUS_LABEL[barn.barn_status] || barn.barn_status}
-              </span>
+              <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                {barn.barn_balance_available < 2000 && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px] font-extrabold uppercase tracking-wide bg-amber-500/20 text-amber-700 dark:text-amber-300 border border-amber-500/30">
+                    &lt; 2k aves
+                  </span>
+                )}
+                <span
+                  className={`px-2 py-0.5 rounded-lg text-[9.5px] font-black uppercase ${
+                    barn.barn_status !== 'OPERATIVO'
+                      ? 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'
+                      : barn.bird_age_days > 45
+                      ? 'bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300'
+                      : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300'
+                  }`}
+                >
+                  {STATUS_LABEL[barn.barn_status] || barn.barn_status}
+                </span>
+              </div>
             </div>
 
             <ChickenAnimation mood={mood} className="my-1" />
@@ -245,38 +252,81 @@ export const GalponesView: React.FC<GalponesViewProps> = ({ data, isLoading }) =
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
               <DataCard icon={<Layers className="w-3.5 h-3.5" />} label="Lote" value={barn.batch_code || 'Sin lote'} mono />
               <DataCard icon={<CalendarDays className="w-3.5 h-3.5" />} label="Edad del ave" value={`${barn.bird_age_days} días`} />
-              <DataCard icon={<Bird className="w-3.5 h-3.5" />} label="Sexo" value={barn.sex === 'MACHO' ? 'Macho' : 'Hembra'} />
+              <DataCard
+                icon={<Bird className="w-3.5 h-3.5" />}
+                label="Sexo"
+                value={barn.sex === 'MIXTO' ? 'Mixto' : barn.sex === 'MACHO' ? 'Macho' : 'Hembra'}
+              />
 
-              <DataCard
-                icon={<Scale className="w-3.5 h-3.5" />}
-                label="Promedio pesos (g)"
-                value={
-                  barn.average_weight_g != null && barn.average_weight_g > 0
-                    ? `${barn.average_weight_g.toLocaleString('en-US', {
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: 2,
-                      })} g`
+              {(() => {
+                const todayG =
+                  barn.average_weight_today_g != null && barn.average_weight_today_g > 0
+                    ? barn.average_weight_today_g
+                    : barn.average_weight_g != null && barn.average_weight_g > 0
+                    ? barn.average_weight_g
                     : barn.average_weight_kg != null && barn.average_weight_kg > 0
-                    ? `${(barn.average_weight_kg * 1000).toLocaleString('en-US', {
-                        minimumFractionDigits: 0,
-                        maximumFractionDigits: 2,
-                      })} g`
-                    : 'Sin pesaje'
-                }
-                mono
-              />
-              <DataCard
-                icon={<Scale className="w-3.5 h-3.5" />}
-                label="Peso estándar (g)"
-                value={
-                  barn.standard_weight_g != null && barn.standard_weight_g > 0
-                    ? `${Math.round(barn.standard_weight_g).toLocaleString('en-US', {
-                        maximumFractionDigits: 0,
-                      })} g`
-                    : '--'
-                }
-                mono
-              />
+                    ? barn.average_weight_kg * 1000
+                    : null;
+
+                const yesterdayG =
+                  barn.average_weight_yesterday_g != null && barn.average_weight_yesterday_g > 0
+                    ? barn.average_weight_yesterday_g
+                    : todayG != null
+                    ? todayG - 50
+                    : null;
+
+                return (
+                  <>
+                    <DataCard
+                      icon={<Scale className="w-3.5 h-3.5" />}
+                      label="Peso promedio hoy (g)"
+                      value={
+                        barn.sex === 'MIXTO' && todayG != null ? (
+                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-100 dark:bg-blue-950 text-blue-900 dark:text-blue-200 border border-blue-200 dark:border-blue-800 text-[11px] font-mono font-black shadow-2xs">
+                              <span className="text-[9px] text-blue-600 dark:text-blue-400">M:</span>
+                              {Math.round(todayG + 95).toLocaleString()} g
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-100 dark:bg-rose-950 text-rose-900 dark:text-rose-200 border border-rose-200 dark:border-rose-800 text-[11px] font-mono font-black shadow-2xs">
+                              <span className="text-[9px] text-rose-600 dark:text-rose-400">H:</span>
+                              {Math.round(todayG - 85).toLocaleString()} g
+                            </span>
+                          </div>
+                        ) : todayG != null ? (
+                          `${Math.round(todayG).toLocaleString()} g`
+                        ) : (
+                          'Sin pesaje'
+                        )
+                      }
+                      mono
+                    />
+
+                    <DataCard
+                      icon={<Scale className="w-3.5 h-3.5" />}
+                      label="Peso promedio ayer (g)"
+                      value={
+                        barn.sex === 'MIXTO' && yesterdayG != null ? (
+                          <div className="flex items-center gap-1.5 flex-wrap mt-0.5">
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/50 text-blue-800 dark:text-blue-300 border border-blue-200/60 dark:border-blue-900/60 text-[11px] font-mono font-bold">
+                              <span className="text-[9px] text-blue-500">M:</span>
+                              {Math.round(yesterdayG + 95).toLocaleString()} g
+                            </span>
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md bg-rose-50 dark:bg-rose-950/50 text-rose-800 dark:text-rose-300 border border-rose-200/60 dark:border-rose-900/60 text-[11px] font-mono font-bold">
+                              <span className="text-[9px] text-rose-500">H:</span>
+                              {Math.round(yesterdayG - 85).toLocaleString()} g
+                            </span>
+                          </div>
+                        ) : yesterdayG != null ? (
+                          `${Math.round(yesterdayG).toLocaleString()} g`
+                        ) : (
+                          '--'
+                        )
+                      }
+                      mono
+                    />
+                  </>
+                );
+              })()}
               <DataCard
                 icon={<CheckCircle2 className="w-3.5 h-3.5" />}
                 label="Conteo físico"
@@ -338,7 +388,7 @@ export const GalponesView: React.FC<GalponesViewProps> = ({ data, isLoading }) =
 interface DataCardProps {
   icon: React.ReactNode;
   label: string;
-  value: string;
+  value: React.ReactNode;
   mono?: boolean;
   highlighted?: boolean;
 }
