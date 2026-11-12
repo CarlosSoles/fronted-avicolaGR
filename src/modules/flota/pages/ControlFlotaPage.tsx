@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Truck,
   CheckCircle2,
@@ -24,6 +24,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { ModuleTabs } from '@/components/ui/ModuleTabs';
 import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
 import {
   DateFilterValue,
@@ -42,10 +43,27 @@ import {
   TransportVehicleUpdatePayload,
   AssignTransportPayload,
   DispatchPhase,
+  ESTADO_COMERCIAL_META,
   computeCages,
+  deriveEstadoComercial,
 } from '@/types/comercial';
-import { FlotaGpsMap } from '@/modules/gerencia/components/gps/FlotaGpsMap';
+import { LazyFlotaGpsMap as FlotaGpsMap } from '@/modules/gerencia/components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
+import { getFarmOriginCoordinate } from '@/modules/gerencia/components/gps/gpsRoutesData';
+
+const FLOTA_ORDERS_CACHE_KEY = 'avicola_flota_orders';
+const FLOTA_VEHICLES_CACHE_KEY = 'avicola_flota_vehicles';
+
+function readCachedJson<T>(key: string): T[] | null {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
 import { DispatchLifecycleStepper } from '@/modules/gerencia/components/dispatch/DispatchLifecycleStepper';
 import { DispatchPhasePipeline } from '@/modules/gerencia/components/dispatch/DispatchPhasePipeline';
 import { WhatsAppManifestModal } from '@/modules/gerencia/components/dispatch/WhatsAppManifestModal';
@@ -106,12 +124,22 @@ const createEmptyVehicleForm = (): VehicleFormState => ({
 export const ControlFlotaPage: React.FC = () => {
   const { user } = useAuth();
 
+  const initialCachedOrders = useMemo(() => readCachedJson<SalesOrder>(FLOTA_ORDERS_CACHE_KEY), []);
+  const initialCachedVehicles = useMemo(() => readCachedJson<TransportVehicle>(FLOTA_VEHICLES_CACHE_KEY), []);
+
   const [activeTab, setActiveTab] = useState<'despacho' | 'flota'>('despacho');
-  const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [vehicles, setVehicles] = useState<TransportVehicle[]>([]);
-  const [loading, setLoading] = useState<boolean>(true);
+  const [orders, setOrders] = useState<SalesOrder[]>(() => initialCachedOrders ?? []);
+  const [vehicles, setVehicles] = useState<TransportVehicle[]>(() => initialCachedVehicles ?? []);
+  const [loading, setLoading] = useState<boolean>(
+    () => initialCachedOrders === null && initialCachedVehicles === null
+  );
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const ordersRef = useRef<SalesOrder[]>(orders);
+  ordersRef.current = orders;
+  const lastFetchAtRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
 
   // Filtros de Asignación de Transporte
   const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
@@ -148,29 +176,40 @@ export const ControlFlotaPage: React.FC = () => {
   };
 
   const fetchData = useCallback(async (silent = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     if (!silent) setRefreshing(true);
     try {
-      const [ordersRes, vehiclesRes] = await Promise.allSettled([
-        apiClient<SalesOrder[]>('/comercial/orders'),
+      const [ordersRes, vehiclesRes, farmsRes] = await Promise.allSettled([
+        apiClient<SalesOrder[]>('/comercial/orders?statuses=APROBADO_RESERVADO,DESPACHADO'),
         apiClient<TransportVehicle[]>('/comercial/transport/vehicles'),
+        apiClient<Array<{ code: string; latitude?: number | null; longitude?: number | null }>>('/admin/farms'),
       ]);
+
+      if (farmsRes.status === 'fulfilled' && Array.isArray(farmsRes.value)) {
+        gpsSimulationStore.setFarmCoordinates(farmsRes.value);
+      }
 
       if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
         setOrders(ordersRes.value);
-        localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersRes.value));
+        try {
+          localStorage.setItem(FLOTA_ORDERS_CACHE_KEY, JSON.stringify(ordersRes.value));
+        } catch {}
       } else if (!silent) {
-        const stored = localStorage.getItem('avicola_comercial_orders');
-        if (stored) {
-          try {
-            setOrders(JSON.parse(stored));
-          } catch {}
-        }
+        const cached = readCachedJson<SalesOrder>(FLOTA_ORDERS_CACHE_KEY);
+        if (cached) setOrders(cached);
       }
 
       if (vehiclesRes.status === 'fulfilled' && Array.isArray(vehiclesRes.value)) {
         setVehicles(vehiclesRes.value);
+        try {
+          localStorage.setItem(FLOTA_VEHICLES_CACHE_KEY, JSON.stringify(vehiclesRes.value));
+        } catch {}
       }
+
+      lastFetchAtRef.current = Date.now();
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
@@ -187,7 +226,11 @@ export const ControlFlotaPage: React.FC = () => {
         fetchData(true);
       }
     }, 45000);
-    const onFocus = () => fetchData(true);
+    const onFocus = () => {
+      if (Date.now() - lastFetchAtRef.current > 15000) {
+        fetchData(true);
+      }
+    };
     window.addEventListener('focus', onFocus);
     return () => {
       clearInterval(interval);
@@ -203,57 +246,62 @@ export const ControlFlotaPage: React.FC = () => {
   useEffect(() => {
     const unsub = gpsSimulationStore.subscribe(() => {
       const trucks = gpsSimulationStore.getTrucks();
+      const pendingUpdates: Array<{ id: string; dispatch_phase: DispatchPhase }> = [];
+      let hasChanges = false;
+      const nowIso = new Date().toISOString();
 
-      setOrders((prevOrders) => {
-        let hasChanges = false;
-        const updated = prevOrders.map((order) => {
-          if (!order.transport_assigned) return order;
+      const nextOrders = ordersRef.current.map((order) => {
+        if (!order.transport_assigned) return order;
 
-          const matchedTruck = trucks.find(
-            (t) =>
-              t.id === order.transport_truck_id ||
-              (order.transport_plate && t.plate.toLowerCase() === order.transport_plate.toLowerCase())
-          );
+        const matchedTruck = trucks.find(
+          (t) =>
+            t.id === order.transport_truck_id ||
+            (order.transport_plate && t.plate.toLowerCase() === order.transport_plate.toLowerCase())
+        );
 
-          if (!matchedTruck) return order;
+        if (!matchedTruck) return order;
 
-          let targetPhase: DispatchPhase = order.dispatch_phase || 'TRANSPORTE_ASIGNADO';
-          if (matchedTruck.progressPercent >= 100) {
-            targetPhase = 'ENTREGADO_CONFORME';
-          } else if (matchedTruck.progressPercent > 0) {
-            targetPhase = 'EN_TRANSITO';
-          } else if (matchedTruck.isPlaying) {
-            targetPhase = 'EN_GRANJA_CARGANDO';
-          }
+        let targetPhase: DispatchPhase = order.dispatch_phase || 'TRANSPORTE_ASIGNADO';
+        if (matchedTruck.progressPercent >= 100) {
+          targetPhase = 'ENTREGADO_CONFORME';
+        } else if (matchedTruck.progressPercent > 0) {
+          targetPhase = 'EN_TRANSITO';
+        } else if (matchedTruck.isPlaying) {
+          targetPhase = 'EN_GRANJA_CARGANDO';
+        }
 
-          if (order.dispatch_phase !== targetPhase) {
-            hasChanges = true;
-            apiClient<SalesOrder>(`/comercial/orders/${order.id}/dispatch-phase`, {
-              method: 'PATCH',
-              body: JSON.stringify({ dispatch_phase: targetPhase }),
-            }).catch(() => {});
+        if (order.dispatch_phase !== targetPhase) {
+          hasChanges = true;
+          pendingUpdates.push({ id: order.id, dispatch_phase: targetPhase });
 
-            const newStatus: OrderStatus =
-              targetPhase === 'ENTREGADO_CONFORME'
-                ? 'DESPACHADO'
-                : order.status === 'DESPACHADO'
-                ? 'APROBADO_RESERVADO'
-                : order.status;
+          const newStatus: OrderStatus =
+            targetPhase === 'ENTREGADO_CONFORME'
+              ? 'DESPACHADO'
+              : order.status === 'DESPACHADO'
+              ? 'APROBADO_RESERVADO'
+              : order.status;
 
-            return {
-              ...order,
-              dispatch_phase: targetPhase,
-              dispatch_phase_updated_at: new Date().toISOString(),
-              status: newStatus,
-              updated_at: new Date().toISOString(),
-            };
-          }
+          return {
+            ...order,
+            dispatch_phase: targetPhase,
+            dispatch_phase_updated_at: nowIso,
+            status: newStatus,
+            updated_at: nowIso,
+          };
+        }
 
-          return order;
-        });
-
-        return hasChanges ? updated : prevOrders;
+        return order;
       });
+
+      if (hasChanges) {
+        setOrders(nextOrders);
+        pendingUpdates.forEach(({ id, dispatch_phase }) => {
+          apiClient<SalesOrder>(`/comercial/orders/${id}/dispatch-phase`, {
+            method: 'PATCH',
+            body: JSON.stringify({ dispatch_phase }),
+          }).catch(() => {});
+        });
+      }
     });
 
     return () => unsub();
@@ -309,19 +357,32 @@ export const ControlFlotaPage: React.FC = () => {
   // CICLO DE VIDA DEL DESPACHO (3 ACCIONES DEL CONTROLADOR DE FLOTA)
   // ===========================================================================
 
-  /** Confirmar que el camión llegó a la granja → EN_GRANJA_CARGANDO */
+  const syncOrderUpdate = (updated: SalesOrder) => {
+    setOrders((prev) => {
+      const next = prev.map((o) => (o.id === updated.id ? updated : o));
+      gpsSimulationStore.syncOrders(next);
+      return next;
+    });
+  };
+
+  /** Confirmar que el camión llegó a la granja → EN_GRANJA_CARGANDO (Confirmado) */
   const handleConfirmarLlegadaGranja = async (order: SalesOrder) => {
-    if (!window.confirm(`¿Confirmar que el camión ${order.transport_plate} llegó a ${order.assigned_farm_code}?\n\nEsto marca el inicio de la carga en granja.`)) {
+    if (!window.confirm(`¿Confirmar que el camión ${order.transport_plate} llegó a ${order.assigned_farm_code}?\n\nEsto actualiza el GPS en el origen de granja y marca el pedido como Confirmado.`)) {
       return;
     }
+    const farmCoords = getFarmOriginCoordinate(order.assigned_farm_code);
     try {
       const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/confirmar-llegada-granja`, {
         method: 'POST',
-        body: JSON.stringify({ notas: 'Llegada confirmada por Control de Flota' }),
+        body: JSON.stringify({
+          latitud_llegada: farmCoords?.lat,
+          longitud_llegada: farmCoords?.lng,
+          notas: 'Llegada confirmada por Control de Flota',
+        }),
       });
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+      syncOrderUpdate(updated);
       gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 0);
-      showToast(`🚛 Camión ${order.transport_plate} llegó a ${order.assigned_farm_code}.`);
+      showToast(`🚛 Camión ${order.transport_plate} llegó a ${order.assigned_farm_code}. Pedido Confirmado.`);
     } catch (err: any) {
       showToast(`❌ Error: ${err.message || 'Error de conexión'}`);
     }
@@ -329,35 +390,47 @@ export const ControlFlotaPage: React.FC = () => {
 
   /** Confirmar que el camión salió de granja con la carga → EN_TRANSITO, DESPACHADO */
   const handleIniciarRuta = async (order: SalesOrder) => {
-    if (!window.confirm(`¿Confirmar que el camión ${order.transport_plate} salió de ${order.assigned_farm_code} con la carga?\n\nSe descontará el stock físico de Pecuaria y el pedido pasará a estado "En ruta".`)) {
+    if (!window.confirm(`¿Confirmar que el camión ${order.transport_plate} salió de ${order.assigned_farm_code} con la carga?\n\nSe descontará el stock físico de Pecuaria y el pedido pasará a estado Despachado (en ruta).`)) {
       return;
     }
+    const farmCoords = getFarmOriginCoordinate(order.assigned_farm_code);
     try {
       const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/iniciar-ruta`, {
         method: 'POST',
-        body: JSON.stringify({ notas: 'Salida confirmada por Control de Flota' }),
+        body: JSON.stringify({
+          latitud_salida: farmCoords?.lat,
+          longitud_salida: farmCoords?.lng,
+          notas: 'Salida confirmada por Control de Flota',
+        }),
       });
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+      syncOrderUpdate(updated);
       gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 35);
-      showToast(`🚚 ${order.order_number}: Camión en ruta hacia ${order.client_name}.`);
+      showToast(`🚚 ${order.order_number}: Despachado en ruta hacia ${order.client_name}.`);
     } catch (err: any) {
       showToast(`❌ Error: ${err.message || 'Error de conexión'}`);
     }
   };
 
-  /** Confirmar entrega conforme en el punto de destino → ENTREGADO_CONFORME */
+  /** Confirmar entrega conforme en el punto de destino → ENTREGADO_CONFORME (Terminado) */
   const handleConfirmarEntrega = async (order: SalesOrder) => {
-    if (!window.confirm(`¿Confirmar la entrega conforme del pedido ${order.order_number} a ${order.client_name}?`)) {
+    if (!window.confirm(`¿Confirmar la entrega conforme del pedido ${order.order_number} a ${order.client_name}?\n\nEl pedido pasará a estado Terminado.`)) {
       return;
     }
+    const latEntrega = typeof order.delivery_latitude === 'number' && Math.abs(order.delivery_latitude) > 0.1 ? order.delivery_latitude : undefined;
+    const lngEntrega = typeof order.delivery_longitude === 'number' && Math.abs(order.delivery_longitude) > 0.1 ? order.delivery_longitude : undefined;
     try {
       const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/confirmar-entrega`, {
         method: 'POST',
-        body: JSON.stringify({ nombre_recibe: 'Conforme', notas: 'Entrega confirmada por Control de Flota' }),
+        body: JSON.stringify({
+          latitud_entrega: latEntrega,
+          longitud_entrega: lngEntrega,
+          nombre_recibe: 'Conforme',
+          notas: 'Entrega confirmada por Control de Flota',
+        }),
       });
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
+      syncOrderUpdate(updated);
       gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 100);
-      showToast(`✅ ${order.order_number}: Entregado conforme a ${order.client_name}.`);
+      showToast(`✅ ${order.order_number}: Terminado — entregado conforme a ${order.client_name}.`);
     } catch (err: any) {
       showToast(`❌ Error: ${err.message || 'Error de conexión'}`);
     }
@@ -710,93 +783,83 @@ export const ControlFlotaPage: React.FC = () => {
         </div>
       </div>
 
-      {/* KPIs DE CONTROL DE FLOTA */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-amber-200 dark:border-amber-900/60 shadow-xs">
-          <div className="flex items-center justify-between text-amber-700 dark:text-amber-400 text-[10px] font-black uppercase tracking-wider">
-            <span>Por Asignar Camión</span>
-            <Clock className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-black font-mono text-amber-700 dark:text-amber-400 mt-1">
-            {metrics.pendingTransport}
-          </div>
-          <div className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
-            Pedidos programados esperando unidad
-          </div>
-        </div>
-
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs">
-          <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider">
-            <span>Con Unidad Asignada</span>
-            <PackageCheck className="w-4 h-4 text-emerald-500" />
-          </div>
-          <div className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 mt-1">
-            {metrics.assigned}
-          </div>
-          <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
-            Sincronizados con Gestión Comercial
-          </div>
-        </div>
-
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-blue-200 dark:border-blue-900/60 shadow-xs">
-          <div className="flex items-center justify-between text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase tracking-wider">
-            <span>Carga / En Tránsito</span>
-            <MapPin className="w-4 h-4 text-blue-600" />
-          </div>
-          <div className="text-2xl font-black font-mono text-blue-700 dark:text-blue-400 mt-1">
-            {metrics.inTransit}
-          </div>
-          <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">
-            Unidades en granja o carretera
-          </div>
-        </div>
-
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider">
-            <span>Flota Registrada</span>
-            <Truck className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
-            {metrics.totalVehicles}
-          </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-            {metrics.availableVehicles} unidades disponibles
-          </div>
-        </div>
-      </div>
-
       {/* PESTAÑAS DEL MÓDULO CONTROL DE FLOTA */}
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 text-xs font-bold overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('despacho')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'despacho'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Truck className="w-4 h-4 shrink-0" />
-          <span>Asignación de Transporte</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('flota')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'flota'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Flota de Distribución</span>
-        </button>
-      </div>
+      <ModuleTabs
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: 'despacho',
+            label: 'Asignación de Transporte',
+            icon: <Truck className="w-4 h-4 shrink-0" />,
+          },
+          {
+            id: 'flota',
+            label: 'Flota de Distribución',
+            icon: <Truck className="w-4 h-4 text-emerald-600 shrink-0" />,
+          },
+        ]}
+      />
 
       {/* ===================================================================== */}
       {/* PESTAÑA 1: ASIGNACIÓN DE TRANSPORTE A PEDIDOS PROGRAMADOS             */}
       {/* ===================================================================== */}
       {activeTab === 'despacho' && (
         <div className="space-y-4">
+          {/* KPIs DE CONTROL DE FLOTA */}
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-amber-200 dark:border-amber-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-amber-700 dark:text-amber-400 text-[10px] font-black uppercase tracking-wider">
+                <span>Por Asignar Camión</span>
+                <Clock className="w-4 h-4 text-amber-500" />
+              </div>
+              <div className="text-2xl font-black font-mono text-amber-700 dark:text-amber-400 mt-1">
+                {metrics.pendingTransport}
+              </div>
+              <div className="text-[10px] text-amber-600 dark:text-amber-400 font-bold mt-0.5">
+                Pedidos programados esperando unidad
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-emerald-200 dark:border-emerald-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-emerald-700 dark:text-emerald-400 text-[10px] font-black uppercase tracking-wider">
+                <span>Con Unidad Asignada</span>
+                <PackageCheck className="w-4 h-4 text-emerald-500" />
+              </div>
+              <div className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 mt-1">
+                {metrics.assigned}
+              </div>
+              <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-bold mt-0.5">
+                Sincronizados con Gestión Comercial
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-blue-200 dark:border-blue-900/60 shadow-xs">
+              <div className="flex items-center justify-between text-blue-700 dark:text-blue-400 text-[10px] font-black uppercase tracking-wider">
+                <span>Carga / En Tránsito</span>
+                <MapPin className="w-4 h-4 text-blue-600" />
+              </div>
+              <div className="text-2xl font-black font-mono text-blue-700 dark:text-blue-400 mt-1">
+                {metrics.inTransit}
+              </div>
+              <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">
+                Unidades en granja o carretera
+              </div>
+            </div>
+
+            <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs">
+              <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider">
+                <span>Flota Registrada</span>
+                <Truck className="w-4 h-4 text-emerald-600" />
+              </div>
+              <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
+                {metrics.totalVehicles}
+              </div>
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
+                {metrics.availableVehicles} unidades disponibles
+              </div>
+            </div>
+          </div>
           <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-2xl">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
@@ -878,15 +941,17 @@ export const ControlFlotaPage: React.FC = () => {
                           Saca: {formatDateDisplay(order.target_delivery_date)}
                         </span>
                       </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          order.transport_assigned
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                        }`}
-                      >
-                        {order.transport_assigned ? '🚚 Unidad Asignada' : '⚠️ Sin Transporte'}
-                      </span>
+                      {(() => {
+                        const eco = deriveEstadoComercial(order);
+                        const meta = ESTADO_COMERCIAL_META[eco];
+                        return (
+                          <span
+                            className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider border ${meta.bgColor} ${meta.color} ${meta.borderColor}`}
+                          >
+                            {meta.label}
+                          </span>
+                        );
+                      })()}
                     </div>
 
                     <div className="space-y-2 text-xs">

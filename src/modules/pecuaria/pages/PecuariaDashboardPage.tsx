@@ -5,6 +5,7 @@ import { TablaGeneralSaldoItem, TablaGeneralSaldoResponse, OFFICIAL_FARMS } from
 import { apiClient } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { Button } from '@/components/ui/Button';
+import { ModuleTabs } from '@/components/ui/ModuleTabs';
 import {
   Bird,
   AlertTriangle,
@@ -198,33 +199,22 @@ export const PecuariaDashboardPage: React.FC = () => {
       </div>
 
       {/* Pestañas del módulo */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab('saldo')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'saldo'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-          }`}
-        >
-          <Table2 className="w-4 h-4" />
-          <span>Tabla General de Saldo</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('galpones')}
-          className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'galpones'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-          }`}
-        >
-          <Warehouse className="w-4 h-4" />
-          <span>Ver Galpones</span>
-        </button>
-      </div>
+      <ModuleTabs
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: 'saldo',
+            label: 'Tabla General de Saldo',
+            icon: <Table2 className="w-4 h-4 shrink-0" />,
+          },
+          {
+            id: 'galpones',
+            label: 'Ver Galpones',
+            icon: <Warehouse className="w-4 h-4 shrink-0" />,
+          },
+        ]}
+      />
 
       {loadError && (
         <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-rose-800 dark:text-rose-300">

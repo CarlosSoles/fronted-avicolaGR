@@ -1,5 +1,6 @@
 import { GpsCoordinate, SimulatedTruck } from './simulationTypes';
 import realRoads from './realRoadRoutes.json';
+import { FARM_COORDINATES } from '@/types/pecuaria';
 
 /**
  * Calcula la distancia aproximada en kilómetros entre dos coordenadas (Haversine).
@@ -115,15 +116,139 @@ export const TRUCK_2_METRO_CENCOSUD: SimulatedTruck = {
  */
 export const INITIAL_SIMULATED_TRUCKS: SimulatedTruck[] = [];
 
+function buildInterpolatedPath(origin: GpsCoordinate, dest: GpsCoordinate, steps = 60): GpsCoordinate[] {
+  const path: GpsCoordinate[] = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    path.push({
+      lat: Number((origin.lat + (dest.lat - origin.lat) * t).toFixed(6)),
+      lng: Number((origin.lng + (dest.lng - origin.lng) * t).toFixed(6)),
+    });
+  }
+  path[0] = origin;
+  path[path.length - 1] = dest;
+  return path;
+}
+
+// Coordenadas dinámicas cargadas desde Admin (/admin/farms) con respaldo en FARM_COORDINATES
+const dynamicFarmCoordinates: Record<string, GpsCoordinate> = {};
+
+export function setDynamicFarmCoordinates(
+  farms: Array<{ code?: string; latitude?: number | null; longitude?: number | null }>
+) {
+  if (!Array.isArray(farms)) return;
+  farms.forEach((f) => {
+    const code = String(f.code || '').trim().toUpperCase();
+    const lat = Number(f.latitude);
+    const lng = Number(f.longitude);
+    if (code && Number.isFinite(lat) && Number.isFinite(lng) && lat !== 0 && lng !== 0) {
+      dynamicFarmCoordinates[code] = { lat, lng };
+    }
+  });
+}
+
+export function getFarmOriginCoordinate(farmCode?: string | null): GpsCoordinate | undefined {
+  const code = String(farmCode || '').trim().toUpperCase();
+  if (!code) return undefined;
+  return dynamicFarmCoordinates[code] || FARM_COORDINATES[code];
+}
+
+// Caché de rutas viales reales obtenidas desde OSRM
+const osrmRouteCache = new Map<string, { path: GpsCoordinate[]; durationMin: number }>();
+const osrmPending = new Map<string, Promise<{ path: GpsCoordinate[]; durationMin: number } | null>>();
+
+export function getRouteCacheKey(origin: GpsCoordinate, dest: GpsCoordinate): string {
+  return `${origin.lat.toFixed(5)},${origin.lng.toFixed(5)}->${dest.lat.toFixed(5)},${dest.lng.toFixed(5)}`;
+}
+
+export function getCachedOsrmRoute(origin: GpsCoordinate, dest: GpsCoordinate) {
+  return osrmRouteCache.get(getRouteCacheKey(origin, dest));
+}
+
+export async function fetchOsrmRoadRoute(
+  origin: GpsCoordinate,
+  dest: GpsCoordinate
+): Promise<{ path: GpsCoordinate[]; durationMin: number } | null> {
+  const key = getRouteCacheKey(origin, dest);
+  const cached = osrmRouteCache.get(key);
+  if (cached) return cached;
+
+  const inflight = osrmPending.get(key);
+  if (inflight) return inflight;
+
+  const task = (async () => {
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+      const url = `https://router.project-osrm.org/route/v1/driving/${origin.lng},${origin.lat};${dest.lng},${dest.lat}?overview=full&geometries=geojson`;
+      const res = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      if (!res.ok) return null;
+      const data = await res.json();
+      const route = data?.routes?.[0];
+      const coords: Array<[number, number]> | undefined = route?.geometry?.coordinates;
+      if (!Array.isArray(coords) || coords.length < 2) return null;
+
+      const path: GpsCoordinate[] = coords.map(([lng, lat]) => ({ lat, lng }));
+      path[0] = origin;
+      path[path.length - 1] = dest;
+
+      const durationMin = Math.max(5, Math.round((Number(route.duration) || 1200) / 60));
+      const result = { path, durationMin };
+      osrmRouteCache.set(key, result);
+      return result;
+    } catch {
+      return null;
+    } finally {
+      osrmPending.delete(key);
+    }
+  })();
+
+  osrmPending.set(key, task);
+  return task;
+}
+
 /**
  * Genera dinámicamente una unidad telemática en ruta para un pedido real aprobado con transporte
  */
 export function createSimulatedTruckFromOrder(order: any, existingTruck?: SimulatedTruck): SimulatedTruck {
   const zoneStr = String(order.zone_code || '').toUpperCase();
   const isNorte = zoneStr.includes('NORTE');
-  const fullPath = isNorte ? ROUTE_2_SMOOTH : ROUTE_1_SMOOTH;
-  const waypoints = isNorte ? WAYPOINTS_TRUCK_2 : WAYPOINTS_TRUCK_1;
+  const templatePath = isNorte ? ROUTE_2_SMOOTH : ROUTE_1_SMOOTH;
   const routeColor = isNorte ? '#2563eb' : '#059669';
+
+  const farmCode = order.assigned_farm_code || order.suggested_farm_code || 'TRAD1';
+  const barnCode = order.assigned_barn_code || order.suggested_barn_code || 'G-01';
+
+  const farmOrigin: GpsCoordinate = getFarmOriginCoordinate(farmCode) || templatePath[0];
+  const hasClientCoord =
+    Number.isFinite(Number(order.delivery_latitude)) &&
+    Number.isFinite(Number(order.delivery_longitude)) &&
+    Number(order.delivery_latitude) !== 0 &&
+    Number(order.delivery_longitude) !== 0;
+
+  const clientDest: GpsCoordinate = hasClientCoord
+    ? { lat: Number(order.delivery_latitude), lng: Number(order.delivery_longitude) }
+    : templatePath[templatePath.length - 1];
+
+  const cachedOsrm = getCachedOsrmRoute(farmOrigin, clientDest);
+  const existingMatchesEndpoints =
+    existingTruck &&
+    existingTruck.fullPath.length > 2 &&
+    calculateDistanceKm(existingTruck.fullPath[0], farmOrigin) < 0.05 &&
+    calculateDistanceKm(existingTruck.fullPath[existingTruck.fullPath.length - 1], clientDest) < 0.05;
+
+  const fullPath: GpsCoordinate[] = cachedOsrm
+    ? cachedOsrm.path
+    : existingMatchesEndpoints
+      ? existingTruck!.fullPath
+      : buildInterpolatedPath(farmOrigin, clientDest);
+
+  const waypoints: GpsCoordinate[] = [
+    fullPath[0],
+    fullPath[Math.floor(fullPath.length / 2)],
+    fullPath[fullPath.length - 1],
+  ];
 
   const birds = order.allocated_quantity || order.requested_quantity || 3500;
   const cages = order.estimated_cages || Math.ceil(birds / 8);
@@ -136,12 +261,17 @@ export function createSimulatedTruckFromOrder(order: any, existingTruck?: Simula
   const driverName = order.transport_driver_name || 'Carlos Méndez Rojas';
   const driverPhone = order.transport_driver_phone || '+51 984 123 456';
 
+  const sameOriginAsExisting =
+    existingTruck &&
+    existingTruck.fullPath.length > 0 &&
+    calculateDistanceKm(existingTruck.fullPath[0], fullPath[0]) < 0.05;
+
   let initialIndex = 0;
   let initialProgress = 0;
   let initialStatus: 'EN_GRANJA' | 'EN_TRANSITO' | 'EN_DESTINO' = 'EN_GRANJA';
 
-  if (existingTruck) {
-    initialIndex = existingTruck.currentIndex;
+  if (existingTruck && sameOriginAsExisting) {
+    initialIndex = Math.min(existingTruck.currentIndex, fullPath.length - 1);
     initialProgress = existingTruck.progressPercent;
     initialStatus = existingTruck.status;
   } else if (order.dispatch_phase === 'EN_TRANSITO') {
@@ -153,9 +283,6 @@ export function createSimulatedTruckFromOrder(order: any, existingTruck?: Simula
     initialProgress = 100;
     initialStatus = 'EN_DESTINO';
   }
-
-  const farmCode = order.assigned_farm_code || order.suggested_farm_code || 'TRAD1';
-  const barnCode = order.assigned_barn_code || order.suggested_barn_code || 'G-01';
 
   return {
     id: truckId,
@@ -179,7 +306,7 @@ export function createSimulatedTruckFromOrder(order: any, existingTruck?: Simula
     currentCoord: fullPath[initialIndex] || fullPath[0],
     progressPercent: initialProgress,
     currentSpeedKmH: existingTruck ? existingTruck.currentSpeedKmH : 0,
-    etaMinutes: isNorte ? 38 : 25,
+    etaMinutes: cachedOsrm ? cachedOsrm.durationMin : (isNorte ? 38 : 25),
     status: initialStatus,
     isPlaying: existingTruck ? existingTruck.isPlaying : false,
     speedMultiplier: existingTruck ? existingTruck.speedMultiplier : 1,

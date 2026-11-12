@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import {
   Sliders,
   Truck,
@@ -47,6 +47,8 @@ import {
   SexPreference,
   OrderActionPayload,
   DispatchPhase,
+  ESTADO_COMERCIAL_META,
+  deriveEstadoComercial,
   computeCages,
   suggestDensity,
   clampDensity,
@@ -55,16 +57,17 @@ import {
   DEFAULT_DENSITY,
 } from '@/types/comercial';
 import { TablaGeneralSaldoItem } from '@/types/pecuaria';
-import { FlotaGpsMap } from '../components/gps/FlotaGpsMap';
+import { LazyFlotaGpsMap as FlotaGpsMap } from '../components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '../components/gps/gpsSimulationStore';
 import { DispatchLifecycleStepper } from '../components/dispatch/DispatchLifecycleStepper';
 import { WhatsAppManifestModal } from '../components/dispatch/WhatsAppManifestModal';
 import { AuditTimeline } from '../components/audit/AuditTimeline';
 import { SaldosGalponPanel } from '../components/SaldosGalponPanel';
+import { PedidosPanel } from '../components/PedidosPanel';
+import { ProgramacionSacaPanel } from '../components/ProgramacionSacaPanel';
 import { RoxiCopilotCard } from '@/components/roxi/RoxiCopilotCard';
-import { RoxiAvatar } from '@/components/roxi/RoxiAvatar';
 import { RoxiGestorDashboard } from '@/components/roxi/RoxiGestorDashboard';
-import { ClientsPanel } from '@/modules/comercial/components/ClientsPanel';
+import { ModuleTabs } from '@/components/ui/ModuleTabs';
 
 // Helper de formato de fecha
 export const formatDateDisplay = (dateStr?: string | null): string => {
@@ -144,7 +147,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Pestaña activa: la primera vista del Gestor Comercial es Saldos por Galpón para planificar en base a disponibilidad
-  const [activeTab, setActiveTab] = useState<'pecuaria' | 'pedidos' | 'clientes' | 'mapa_gps' | 'roxi'>('pecuaria');
+  const [activeTab, setActiveTab] = useState<'pecuaria' | 'pedidos' | 'programacion' | 'mapa_gps' | 'roxi'>('pecuaria');
   const [roxiSelectedOrderId, setRoxiSelectedOrderId] = useState<string>('');
 
   // Filtros
@@ -196,35 +199,41 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
     }, 4500);
   };
 
+  const lastFetchAtRef = useRef<number>(0);
+  const isFetchingRef = useRef<boolean>(false);
+
   // =========================================================================
   // CARGA DE DATOS (PEDIDOS, FLOTA DE TRANSPORTE Y DISPONIBILIDAD PECUARIA)
   // =========================================================================
-  const fetchData = async (silent = false) => {
+  const fetchData = useCallback(async (silent = false) => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     if (!silent) setRefreshing(true);
     try {
-      // 1. Cargar Pedidos Comerciales
-      try {
-        const ordersData = await apiClient<SalesOrder[]>('/comercial/orders');
-        if (Array.isArray(ordersData)) {
-          setOrders(ordersData);
-          localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersData));
-        }
-      } catch (err) {
-        if (!silent) {
-          console.warn('Fallback a pedidos locales:', err);
-          const stored = localStorage.getItem('avicola_comercial_orders');
-          if (stored) {
-            try {
-              setOrders(JSON.parse(stored));
-            } catch {}
-          }
+      const [ordersRes, pecuariaRes] = await Promise.allSettled([
+        apiClient<SalesOrder[]>('/comercial/orders'),
+        apiClient<any>('/pecuaria/tabla-general-saldo'),
+      ]);
+
+      // 1. Pedidos Comerciales
+      if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+        setOrders(ordersRes.value);
+        try {
+          localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersRes.value));
+        } catch {}
+      } else if (!silent) {
+        console.warn('Fallback a pedidos locales');
+        const stored = localStorage.getItem('avicola_comercial_orders');
+        if (stored) {
+          try {
+            setOrders(JSON.parse(stored));
+          } catch {}
         }
       }
 
-      // 2. Cargar Balance de Saldo de Pecuaria
-      try {
-        const pecuariaData = await apiClient<any>('/pecuaria/tabla-general-saldo');
-        const rawList = pecuariaData?.data || pecuariaData?.items;
+      // 2. Balance de Saldo de Pecuaria
+      if (pecuariaRes.status === 'fulfilled') {
+        const rawList = pecuariaRes.value?.data || pecuariaRes.value?.items;
         if (Array.isArray(rawList) && rawList.length > 0) {
           setPecuariaItems(rawList);
         } else {
@@ -232,34 +241,40 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           setPecuariaItems([]);
         }
         setPecuariaLastUpdated(new Date());
-      } catch (err) {
-        // Sin conexión: se mantiene lo último cargado, sin generar datos sintéticos
-        console.warn('No se pudo cargar la disponibilidad de Pecuaria:', err);
+      } else {
+        console.warn('No se pudo cargar la disponibilidad de Pecuaria');
       }
+
+      lastFetchAtRef.current = Date.now();
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
       setRefreshing(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
 
-  // Sincronía automática con Control de Flota: sondeo silencioso cada 45s y refresco al recuperar el foco
+  // Sincronía automática con Control de Flota: sondeo silencioso cada 45s y refresco al recuperar el foco (con cooldown)
   useEffect(() => {
     const interval = setInterval(() => {
       if (!approvingOrder && !observingOrder) {
         fetchData(true);
       }
     }, 45000);
-    const onFocus = () => fetchData(true);
+    const onFocus = () => {
+      if (Date.now() - lastFetchAtRef.current > 15000) {
+        fetchData(true);
+      }
+    };
     window.addEventListener('focus', onFocus);
     return () => {
       clearInterval(interval);
       window.removeEventListener('focus', onFocus);
     };
-  }, [approvingOrder, observingOrder]);
+  }, [fetchData, approvingOrder, observingOrder]);
 
   useEffect(() => {
     gpsSimulationStore.syncOrders(orders);
@@ -1080,525 +1095,45 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       </div>
 
       {/* ========================================================================= */}
-      {/* 5 TARJETAS KPIS TÁCTICAS DEL GESTOR (EN PEDIDOS Y DEMÁS VISTAS) */}
-      {/* ========================================================================= */}
-      {activeTab !== 'pecuaria' && (
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
-        {/* KPI 1: Pendientes de Aprobación */}
-        <div
-          onClick={() => {
-            setActiveTab('pedidos');
-            setSelectedStatus('PENDIENTES_APROBACION');
-          }}
-          className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-            selectedStatus === 'PENDIENTES_APROBACION'
-              ? 'bg-amber-50 dark:bg-amber-950/40 border-amber-300 dark:border-amber-700 ring-2 ring-amber-500/20 shadow-xs'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-amber-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-500 text-[10px] font-black uppercase tracking-wider">
-            <span>Por Aprobar</span>
-            <Clock className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
-            {metrics.pendingOk}
-          </div>
-          <div className="text-[10px] text-amber-700 dark:text-amber-400 font-bold mt-0.5">
-            {metrics.pendingOk > 0 ? 'Requieren revisión táctica' : 'Al día, sin pendientes'}
-          </div>
-        </div>
-
-        {/* KPI 2: Con Observación */}
-        <div
-          onClick={() => {
-            setActiveTab('pedidos');
-            setSelectedStatus('CON_OBSERVACION');
-          }}
-          className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-            selectedStatus === 'CON_OBSERVACION'
-              ? 'bg-rose-50 dark:bg-rose-950/40 border-rose-300 dark:border-rose-700 ring-2 ring-rose-500/20 shadow-xs'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-rose-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-500 text-[10px] font-black uppercase tracking-wider">
-            <span>Con Observación</span>
-            <AlertCircle className="w-4 h-4 text-rose-500" />
-          </div>
-          <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
-            {metrics.observed}
-          </div>
-          <div className="text-[10px] text-rose-700 dark:text-rose-400 font-bold mt-0.5">
-            Devueltos a vendedores
-          </div>
-        </div>
-
-        {/* KPI 3: Aprobados / Reservados */}
-        <div
-          onClick={() => {
-            setActiveTab('pedidos');
-            setSelectedStatus('APROBADO_RESERVADO');
-          }}
-          className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-            selectedStatus === 'APROBADO_RESERVADO'
-              ? 'bg-emerald-50 dark:bg-emerald-950/40 border-emerald-300 dark:border-emerald-700 ring-2 ring-emerald-500/20 shadow-xs'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-emerald-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-500 text-[10px] font-black uppercase tracking-wider">
-            <span>Aprobados con Reserva</span>
-            <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-          </div>
-          <div className="text-2xl font-black font-mono text-emerald-700 dark:text-emerald-400 mt-1">
-            {metrics.approvedTotal}
-          </div>
-          <div className="text-[10px] text-slate-500 mt-0.5">
-            {metrics.totalBirdsApproved.toLocaleString()} aves reservadas
-          </div>
-        </div>
-
-        {/* KPI 4: Esperando Control de Flota */}
-        <div
-          onClick={() => {
-            setActiveTab('pedidos');
-            setSelectedStatus('SIN_TRANSPORTE');
-          }}
-          className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
-            selectedStatus === 'SIN_TRANSPORTE'
-              ? 'bg-blue-50 dark:bg-blue-950/40 border-blue-300 dark:border-blue-700 ring-2 ring-blue-500/20 shadow-xs'
-              : 'bg-white dark:bg-slate-900 border-slate-200 dark:border-slate-800 hover:border-blue-300'
-          }`}
-        >
-          <div className="flex items-center justify-between text-slate-500 text-[10px] font-black uppercase tracking-wider">
-            <span>Sin Transporte (Flota)</span>
-            <Truck className="w-4 h-4 text-blue-600" />
-          </div>
-          <div className="text-2xl font-black font-mono text-blue-700 dark:text-blue-400 mt-1">
-            {metrics.pendingTransport}
-          </div>
-          <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">
-            {metrics.assignedTransport} con unidad asignada
-          </div>
-        </div>
-
-        {/* KPI 5: Tonelaje & Jaulas en Gestión */}
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs col-span-2 sm:col-span-1">
-          <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[10px] font-black uppercase tracking-wider">
-            <span>Carga Total Aprobada</span>
-            <Layers className="w-4 h-4 text-amber-500" />
-          </div>
-          <div className="text-2xl font-black font-mono text-slate-950 dark:text-white mt-1">
-            {metrics.totalTonsApproved} Ton
-          </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 mt-0.5">
-            ~{metrics.totalCagesApproved.toLocaleString()} jaulas estimadas
-          </div>
-        </div>
-      </div>
-      )}
-
-      {/* ========================================================================= */}
       {/* TABS DE NAVEGACIÓN OPERATIVA */}
       {/* ========================================================================= */}
-      <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 text-xs font-bold overflow-x-auto">
-        <button
-          onClick={() => setActiveTab('pecuaria')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'pecuaria'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Bird className="w-4 h-4 text-amber-600 shrink-0" />
-          <span>Saldos por Galpón</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('pedidos')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'pedidos'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Sliders className="w-4 h-4 shrink-0" />
-          <span>Bandeja de Pedidos</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('clientes')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'clientes'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Building2 className="w-4 h-4 shrink-0" />
-          <span>Clientes</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('mapa_gps')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'mapa_gps'
-              ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Monitoreo GPS</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('roxi')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'roxi'
-              ? 'border-indigo-600 text-indigo-600 dark:text-indigo-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />
-          <span>Copiloto ROXI (IA)</span>
-        </button>
-      </div>
+      <ModuleTabs
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: 'pecuaria',
+            label: 'Saldos por Galpón',
+            icon: <Bird className="w-4 h-4 text-amber-600 shrink-0" />,
+          },
+          {
+            id: 'pedidos',
+            label: 'Pedidos',
+            icon: <Sliders className="w-4 h-4 shrink-0" />,
+          },
+          {
+            id: 'programacion',
+            label: 'Programación de saca',
+            icon: <Calendar className="w-4 h-4 text-violet-600 shrink-0" />,
+            activeClassName: 'border-violet-600 text-violet-700 dark:text-violet-400 font-black',
+          },
+          {
+            id: 'mapa_gps',
+            label: 'Monitoreo GPS',
+            icon: <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />,
+            activeClassName: 'border-emerald-600 text-emerald-600 dark:text-emerald-400 font-black',
+          },
+          {
+            id: 'roxi',
+            label: 'Copiloto ROXI (IA)',
+            icon: <Sparkles className="w-4 h-4 text-indigo-600 shrink-0" />,
+            activeClassName: 'border-indigo-600 text-indigo-600 dark:text-indigo-400 font-black',
+          },
+        ]}
+      />
 
       {/* ========================================================================= */}
-      {/* PESTAÑA 1: BANDEJA DE PEDIDOS ENTRANTES */}
-      {/* ========================================================================= */}
-      {activeTab === 'pedidos' && (
-        <div className="space-y-4">
-          {/* Banner Prominente de Acceso a ROXI Copilot */}
-          <div className="p-4 bg-gradient-to-r from-indigo-950 via-slate-900 to-indigo-900 rounded-2xl text-white shadow-md flex flex-col md:flex-row items-center justify-between gap-4 border border-indigo-800/60">
-            <div className="flex items-center gap-3.5">
-              <RoxiAvatar mood="saludando" size="md" className="shrink-0" />
-              <div>
-                <div className="flex items-center gap-2">
-                  <h3 className="font-black text-sm text-white tracking-wide">ROXI • Copiloto de Inteligencia Comercial</h3>
-                </div>
-                <p className="text-xs text-indigo-200 mt-0.5">
-                  Optimiza la asignación de galpones, fletes viales reales (km) y rotación sanitaria (lotes &gt; 45 días) para los pedidos registrados.
-                </p>
-              </div>
-            </div>
-            <Button
-              size="sm"
-              onClick={() => setActiveTab('roxi')}
-              className="bg-indigo-600 hover:bg-indigo-700 text-white font-black text-xs shadow-sm px-4 py-2 shrink-0 flex items-center gap-1.5"
-            >
-              <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-              <span>Abrir Centro de Control ROXI</span>
-            </Button>
-          </div>
-
-          {/* Barra de Filtros y Búsqueda */}
-          <div className="flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 p-3 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs">
-            <div className="flex flex-wrap items-center gap-2">
-              {/* Buscador */}
-              <div className="relative min-w-[220px]">
-                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-                <Input
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Buscar N° pedido, cliente, RUC..."
-                  className="pl-8 py-1.5 text-xs h-9"
-                />
-              </div>
-
-              {/* Filtro Estado */}
-              <select
-                value={selectedStatus}
-                onChange={(e) => setSelectedStatus(e.target.value)}
-                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-100 h-9"
-              >
-                <option value="ALL">Todos los Estados</option>
-                <option value="PENDIENTES_APROBACION">⏳ Pendientes de Aprobación ({metrics.pendingOk})</option>
-                <option value="CON_OBSERVACION">📝 Con Observación ({metrics.observed})</option>
-                <option value="APROBADO_RESERVADO">✅ Aprobados con Reserva ({metrics.approvedTotal})</option>
-                <option value="SIN_TRANSPORTE">🚚 Aprobados sin Transporte ({metrics.pendingTransport})</option>
-                <option value="CON_TRANSPORTE">🚛 Con Transporte Asignado ({metrics.assignedTransport})</option>
-              </select>
-
-              {/* Filtro Fecha (criterio + rango) */}
-              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
-
-              {/* Filtro Zona */}
-              <select
-                value={selectedZone}
-                onChange={(e) => setSelectedZone(e.target.value)}
-                className="px-2.5 py-1.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-100 h-9"
-              >
-                <option value="ALL">Todas las Zonas</option>
-                <option value="NORTE">Zona NORTE</option>
-                <option value="CENTRO">Zona CENTRO</option>
-                <option value="SUR">Zona SUR</option>
-                <option value="METROPOLITANA">Zona METROPOLITANA</option>
-              </select>
-            </div>
-
-            <div className="text-xs text-slate-500 font-mono self-end md:self-center">
-              Mostrando <strong>{filteredOrders.length}</strong> de {orders.length} pedidos
-            </div>
-          </div>
-
-          {/* Tabla Principal del Gestor Comercial */}
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 text-[10px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-3 px-3">N° Pedido</th>
-                    <th className="py-3 px-3">Cliente &amp; Zona</th>
-                    <th className="py-3 px-3 text-center">Fecha Saca</th>
-                    <th className="py-3 px-3 text-right">Aves Solicitadas</th>
-                    <th className="py-3 px-3 text-center">Sexo &amp; Rango Peso</th>
-                    <th className="py-3 px-3">Galpón Origen</th>
-                    <th className="py-3 px-3 text-center">Estado Programación</th>
-                    <th className="py-3 px-3">Transporte Distribución</th>
-                    <th className="py-3 px-3 text-center">Acciones Tácticas</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
-                  {filteredOrders.length === 0 ? (
-                    <tr>
-                      <td colSpan={9} className="py-12 text-center text-slate-400 italic">
-                        No se encontraron pedidos que coincidan con los filtros seleccionados.
-                      </td>
-                    </tr>
-                  ) : (
-                    filteredOrders.map((order) => {
-                      const birds = order.allocated_quantity || order.requested_quantity || 0;
-                      const cages = order.estimated_cages || computeCages(birds, order.density_birds_per_cage);
-                      const avgW = (order.min_weight_kg + order.max_weight_kg) / 2.0;
-                      const tons = order.estimated_total_kg
-                        ? Math.round(order.estimated_total_kg / 100) / 10
-                        : Math.round(((birds * avgW) / 1000) * 10) / 10;
-
-                      return (
-                        <tr key={order.id} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40 transition-colors">
-                          {/* N° Pedido (texto limpio) */}
-                          <td className="py-3 px-3 font-mono font-black text-slate-900 dark:text-slate-100 whitespace-nowrap">
-                            <div>{order.order_number}</div>
-                            {order.is_split_child && (
-                              <span className="text-[9px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100 dark:bg-indigo-950 px-1.5 py-0.2 rounded font-sans inline-block mt-0.5">
-                                ✂️ Fraccionado
-                              </span>
-                            )}
-                          </td>
-
-                          {/* Cliente & Zona */}
-                          <td className="py-3 px-3 min-w-[200px]">
-                            <div className="font-bold text-slate-900 dark:text-slate-100 leading-tight">
-                              {order.client_name}
-                            </div>
-                            <div className="text-[10px] text-slate-500 flex items-center gap-1.5 mt-0.5">
-                              <span className="font-medium">Zona {order.zone_code}</span>
-                              {order.external_reference && <span>&bull; OC: {order.external_reference}</span>}
-                            </div>
-                            <div className="text-[9.5px] text-slate-400 mt-0.5 flex items-center gap-1">
-                              <span className="text-slate-400">Vendedor:</span>
-                              <span className="font-bold text-slate-700 dark:text-slate-300">
-                                {resolveSellerFullName(order)}
-                              </span>
-                            </div>
-                          </td>
-
-                          {/* Fecha Saca */}
-                          <td className="py-3 px-3 text-center font-mono whitespace-nowrap font-bold text-slate-800 dark:text-slate-200">
-                            {formatDateDisplay(order.target_delivery_date)}
-                          </td>
-
-                          {/* Aves & Tonelaje */}
-                          <td className="py-3 px-3 text-right whitespace-nowrap">
-                            <span className="font-mono font-black text-slate-950 dark:text-white block text-sm">
-                              {birds.toLocaleString()} aves
-                            </span>
-                            <span className="text-[10px] text-slate-500 font-mono block">
-                              ~{cages} jlas &bull; {tons} Ton
-                            </span>
-                          </td>
-
-                          {/* Sexo & Rango Solicitado */}
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <div className="font-bold">
-                              {order.sex_preference === 'MACHO' && <span className="text-blue-600 dark:text-blue-400">Macho</span>}
-                              {order.sex_preference === 'HEMBRA' && <span className="text-rose-600 dark:text-rose-400">Hembra</span>}
-                              {(!order.sex_preference || order.sex_preference === 'INDISTINTO') && (
-                                <span className="text-slate-600 dark:text-slate-400">Indistinto</span>
-                              )}
-                            </div>
-                            <div className="text-[10px] font-mono font-bold text-slate-500">
-                              {order.min_weight_kg.toFixed(2)} - {order.max_weight_kg.toFixed(2)} kg
-                            </div>
-                          </td>
-
-                          {/* Galpón Origen */}
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            {order.status === 'APROBADO_RESERVADO' ? (
-                              <div>
-                                <span className="font-mono font-black text-emerald-700 dark:text-emerald-400 block text-xs">
-                                  {order.assigned_farm_code} &bull; {order.assigned_barn_code}
-                                </span>
-                                <span className="text-[9.5px] text-emerald-600 dark:text-emerald-500 font-medium block">
-                                  Reserva confirmada
-                                </span>
-                              </div>
-                            ) : (
-                              <div>
-                                <span className="font-mono text-slate-500 block text-xs">
-                                  Sug: {order.suggested_farm_code || 'TRAD1'} ({order.suggested_barn_code || 'G-??'})
-                                </span>
-                                <span className="text-[9.5px] text-amber-600 dark:text-amber-500 font-medium block">
-                                  Por confirmar
-                                </span>
-                              </div>
-                            )}
-                          </td>
-
-                          {/* Estado Programación (Texto limpio sin cards) */}
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            {order.status === 'REGISTRADO' && (
-                              <span className="font-bold text-amber-700 dark:text-amber-400 text-xs flex items-center justify-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-amber-500 inline-block"></span>
-                                Pendiente de Aprobación
-                              </span>
-                            )}
-                            {order.status === 'APROBADO_RESERVADO' && (
-                              <span className="font-bold text-emerald-700 dark:text-emerald-400 text-xs flex items-center justify-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
-                                Aprobado
-                              </span>
-                            )}
-                            {order.status === 'DESPACHADO' && (
-                              <span className="font-bold text-sky-700 dark:text-sky-400 text-xs flex items-center justify-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-sky-500 inline-block"></span>
-                                Despachado
-                              </span>
-                            )}
-                            {order.status === 'CON_OBSERVACION' && (
-                              <span className="font-bold text-rose-700 dark:text-rose-400 text-xs flex items-center justify-center gap-1.5">
-                                <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
-                                Con observación
-                              </span>
-                            )}
-                            {order.status === 'CANCELADO' && (
-                              <span className="font-bold text-slate-500 text-xs">Cancelado</span>
-                            )}
-                          </td>
-
-                          {/* Transporte de Distribución (asignado desde Control de Flota) */}
-                          <td className="py-3 px-3 whitespace-nowrap">
-                            {order.transport_assigned ? (
-                              <div>
-                                <div className="font-mono font-black text-slate-900 dark:text-slate-100 flex items-center gap-1">
-                                  <Truck className="w-3.5 h-3.5 text-emerald-600" />
-                                  <span>{order.transport_plate}</span>
-                                </div>
-                                <div className="text-[9.5px] text-slate-500">
-                                  {order.transport_driver_name} &bull; {order.transport_shift || 'Madrugada'}
-                                </div>
-                                {order.dispatch_phase && (
-                                  <div className="text-[9.5px] font-bold text-sky-600 dark:text-sky-400 mt-0.5">
-                                    {order.dispatch_phase === 'TRANSPORTE_ASIGNADO' && '📍 Asignado'}
-                                    {order.dispatch_phase === 'EN_GRANJA_CARGANDO' && '⏳ En Granja / Cargando'}
-                                    {order.dispatch_phase === 'EN_TRANSITO' && '🚚 En Tránsito'}
-                                    {order.dispatch_phase === 'ENTREGADO_CONFORME' && '✅ Entregado Conforme'}
-                                  </div>
-                                )}
-                              </div>
-                            ) : order.status === 'APROBADO_RESERVADO' ? (
-                              <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-amber-700 dark:text-amber-400">
-                                <Clock className="w-3.5 h-3.5 text-amber-500" />
-                                <span>Pendiente Control de Flota</span>
-                              </span>
-                            ) : (
-                              <span className="text-[10px] text-slate-400 italic">Requiere aprobación previa</span>
-                            )}
-                          </td>
-
-                          {/* Acciones Tácticas */}
-                          <td className="py-3 px-3 text-center whitespace-nowrap">
-                            <div className="flex items-center justify-center gap-1.5">
-                              {/* Botón Asistente ROXI */}
-                              <Button
-                                size="sm"
-                                onClick={() => {
-                                  setRoxiSelectedOrderId(order.id);
-                                  setActiveTab('roxi');
-                                }}
-                                className="h-8 px-2 text-xs bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold shadow-2xs flex items-center gap-1"
-                                title="Evaluar galpón y flete óptimo con ROXI (IA)"
-                              >
-                                <Sparkles className="w-3.5 h-3.5 text-yellow-300" />
-                                <span>ROXI</span>
-                              </Button>
-
-                              {/* Botón Aprobar */}
-                              {order.status !== 'APROBADO_RESERVADO' && order.status !== 'DESPACHADO' && order.status !== 'CANCELADO' && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleOpenApprovalModal(order)}
-                                  className="h-8 px-2.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold shadow-2xs"
-                                  title="Evaluar y Aprobar Reserva Formal"
-                                >
-                                  <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                                  Aprobar
-                                </Button>
-                              )}
-
-                              {/* Botón Generar Código Aris (solo si está aprobado, con camión y sin Aris aún) */}
-                              {order.status === 'APROBADO_RESERVADO' && order.transport_assigned && !order.codigo_aris && (
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleGenerarCodigoAris(order)}
-                                  className="h-8 px-2.5 text-xs bg-violet-600 hover:bg-violet-700 text-white font-extrabold shadow-2xs"
-                                  title="Generar Código Aris para confirmar el pedido"
-                                >
-                                  <Sparkles className="w-3.5 h-3.5 mr-1 text-yellow-300" />
-                                  Generar Aris
-                                </Button>
-                              )}
-
-                              {/* Mostrar código Aris si ya fue generado */}
-                              {order.codigo_aris && (
-                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-400 text-[11px] font-extrabold font-mono">
-                                  <Sparkles className="w-3 h-3" />
-                                  {order.codigo_aris}
-                                </span>
-                              )}
-
-                              {/* Botón Observar */}
-                              {order.status !== 'CANCELADO' && (
-                                <button
-                                  onClick={() => handleOpenObservationModal(order)}
-                                  className="p-1.5 text-slate-400 hover:text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/40 rounded-lg transition-colors"
-                                  title="Devolver con Observación al Vendedor"
-                                >
-                                  <AlertCircle className="w-4 h-4" />
-                                </button>
-                              )}
-
-                              {/* Ver detalle */}
-                              <button
-                                onClick={() => setDetailOrder(order)}
-                                className="p-1.5 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 rounded-lg transition-colors"
-                                title="Ver detalle completo"
-                              >
-                                <Eye className="w-4 h-4" />
-                              </button>
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* PESTAÑA 1: SALDOS POR GALPÓN (PRIMERA VISTA DEL GESTOR COMERCIAL) */}
+      {/* PESTAÑA: SALDOS POR GALPÓN (PRIMERA VISTA DEL GESTOR COMERCIAL)           */}
       {/* ========================================================================= */}
       {activeTab === 'pecuaria' && (
         <SaldosGalponPanel
@@ -1614,16 +1149,43 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       )}
 
       {/* ========================================================================= */}
+      {/* PESTAÑA: PEDIDOS DE VENDEDORES (ANTES DE PROGRAMACIÓN DE SACA)            */}
+      {/* ========================================================================= */}
+      {activeTab === 'pedidos' && (
+        <PedidosPanel
+          orders={orders}
+          pecuariaItems={pecuariaItems}
+          onOrdersSynced={() => fetchData(true)}
+          onApproveOrder={handleOpenApprovalModal}
+          onObserveOrder={handleOpenObservationModal}
+          onShowToast={showToast}
+        />
+      )}
+
+      {/* ========================================================================= */}
+      {/* PESTAÑA: PROGRAMACIÓN DE SACA (RESERVAS, EDICIÓN Y CÓDIGO ARIS)           */}
+      {/* ========================================================================= */}
+      {activeTab === 'programacion' && (
+        <ProgramacionSacaPanel
+          orders={orders}
+          pecuariaItems={pecuariaItems}
+          onOrdersSynced={() => fetchData(true)}
+          onOrderUpdated={(updated) =>
+            setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)))
+          }
+          onOpenApprovalModal={handleOpenApprovalModal}
+          onOpenDetailModal={(order) => setDetailOrder(order)}
+          onOpenGpsModal={(order) => setRouteOrder(order)}
+          onToast={showToast}
+        />
+      )}
+
+      {/* ========================================================================= */}
       {/* PESTAÑA 5: MONITOREO GPS EN VIVO (OPENSTREETMAP) */}
       {/* ========================================================================= */}
       {activeTab === 'mapa_gps' && (
         <FlotaGpsMap readOnly={true} orders={orders} />
       )}
-
-      {/* ========================================================================= */}
-      {/* PESTAÑA: CATÁLOGO DE CLIENTES */}
-      {/* ========================================================================= */}
-      {activeTab === 'clientes' && <ClientsPanel />}
 
       {/* ========================================================================= */}
       {/* PESTAÑA 6: CENTRO DE CONTROL & ASISTENTE INTELIGENTE ROXI */}

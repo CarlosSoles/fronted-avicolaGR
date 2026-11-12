@@ -15,6 +15,7 @@ import {
   Sliders,
   DollarSign,
   AlertCircle,
+  Mic,
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
@@ -22,6 +23,7 @@ import { SalesOrder, OrderStatus } from '@/types/comercial';
 import { TablaGeneralSaldoItem } from '@/types/pecuaria';
 import { RoxiAvatar, RoxiMood } from './RoxiAvatar';
 import { RoxiCopilotCard } from './RoxiCopilotCard';
+import { RoxiChatPanel } from './RoxiChatPanel';
 import {
   askRoxiForBarnRecommendation,
   RoxiAllocationResponse,
@@ -47,7 +49,7 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
   isApproving = false,
   onNavigateToPedidos,
 }) => {
-  const [activeSubTab, setActiveSubTab] = useState<'evaluador' | 'simulador' | 'radar_edad'>('evaluador');
+  const [activeSubTab, setActiveSubTab] = useState<'copiloto' | 'evaluador' | 'simulador' | 'radar_edad'>('copiloto');
 
   // Pedidos activos (no cancelados ni despachados si se quiere priorizar)
   const pendingOrders = useMemo(() => {
@@ -109,7 +111,7 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
                   <span>ROXI • Centro de Control IA</span>
                 </h2>
                 <span className="px-2.5 py-0.5 text-[10px] font-extrabold uppercase rounded-full bg-blue-500/20 text-blue-300 border border-blue-400/30">
-                  Inventario en Vivo • 23 Granjas
+                  Inventario en Vivo
                 </span>
               </div>
               <p className="text-xs text-indigo-200 max-w-2xl leading-relaxed">
@@ -140,7 +142,19 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
         </div>
 
         {/* SUB-TABS INTERNOS DEL DASHBOARD DE ROXI */}
-        <div className="flex items-center gap-2 mt-6 pt-4 border-t border-white/10 text-xs font-bold">
+        <div className="flex flex-wrap items-center gap-2 mt-6 pt-4 border-t border-white/10 text-xs font-bold">
+          <button
+            onClick={() => setActiveSubTab('copiloto')}
+            className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
+              activeSubTab === 'copiloto'
+                ? 'bg-indigo-600 text-white shadow-md'
+                : 'bg-white/5 text-slate-300 hover:bg-white/10'
+            }`}
+          >
+            <Mic className="w-4 h-4 text-emerald-300" />
+            <span>Copiloto por Voz y KPIs</span>
+          </button>
+
           <button
             onClick={() => setActiveSubTab('evaluador')}
             className={`px-4 py-2 rounded-xl transition-all flex items-center gap-2 ${
@@ -178,6 +192,20 @@ export const RoxiGestorDashboard: React.FC<RoxiGestorDashboardProps> = ({
           </button>
         </div>
       </div>
+
+      {/* ========================================================================= */}
+      {/* VISTA 0: COPILOTO CONVERSACIONAL POR VOZ, KPIS Y RECOMENDACIONES          */}
+      {/* ========================================================================= */}
+      {activeSubTab === 'copiloto' && (
+        <RoxiChatPanel
+          selectedOrder={currentOrder}
+          onNavigateToPedidos={onNavigateToPedidos}
+          onOpenOrderInEvaluator={(orderId) => {
+            onSelectOrder(orderId);
+            setActiveSubTab('evaluador');
+          }}
+        />
+      )}
 
       {/* ========================================================================= */}
       {/* VISTA 1: EVALUADOR DE PEDIDOS REALES DE LA BANDEJA */}

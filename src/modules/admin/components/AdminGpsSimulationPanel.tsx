@@ -16,7 +16,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { apiClient } from '@/lib/api';
-import { FlotaGpsMap } from '@/modules/gerencia/components/gps/FlotaGpsMap';
+import { LazyFlotaGpsMap as FlotaGpsMap } from '@/modules/gerencia/components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
 import { SimulatedTruck } from '@/modules/gerencia/components/gps/simulationTypes';
 

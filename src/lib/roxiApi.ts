@@ -1,4 +1,5 @@
-import { apiClient } from './api';
+import { API_BASE_URL, apiClient } from './api';
+import { supabase } from './supabase';
 import { FARM_COORDINATES, generateInitialOfficialData, haversineKm } from '@/types/pecuaria';
 
 export interface CandidateBarnEvaluation {
@@ -225,5 +226,85 @@ export async function getRoxiStatus(): Promise<any> {
       status: 'DEGRADED_FALLBACK',
       company: 'Avícola GR / Grupo El Rocío',
     };
+  }
+}
+
+export interface RoxiChatHistoryItem {
+  role: 'user' | 'assistant';
+  text: string;
+}
+
+export interface RoxiChatRequestPayload {
+  message: string;
+  order_id?: string;
+  order_context?: Record<string, unknown>;
+  history?: RoxiChatHistoryItem[];
+}
+
+export interface RoxiChatResponsePayload {
+  reply: string;
+  spoken_reply: string;
+  in_scope: boolean;
+  suggested_action?: string | null;
+  action_payload?: Record<string, unknown> | null;
+  kpis_snapshot?: Record<string, unknown> | null;
+}
+
+export async function chatWithRoxi(
+  payload: RoxiChatRequestPayload
+): Promise<RoxiChatResponsePayload> {
+  return await apiClient<RoxiChatResponsePayload>('/agent/chat', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+async function resolveAuthToken(): Promise<string | null> {
+  let token: string | null = localStorage.getItem('avicola_token');
+  if (!token) {
+    try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      token = session?.access_token || null;
+    } catch {
+      token = null;
+    }
+  }
+  if (!token && import.meta.env.DEV) {
+    try {
+      const stored = localStorage.getItem('avicola_user');
+      const user = stored ? JSON.parse(stored) : null;
+      token = `dev-token-${user?.role || 'gestor_comercial'}`;
+    } catch {
+      token = 'dev-token-gestor_comercial';
+    }
+  }
+  return token;
+}
+
+/**
+ * Solicita audio MP3 de edge-tts (es-CO-SalomeNeural) al backend.
+ * Devuelve null si edge-tts no está disponible para usar el respaldo del navegador.
+ */
+export async function synthesizeRoxiSpeech(
+  text: string,
+  voice: string = 'es-CO-SalomeNeural'
+): Promise<Blob | null> {
+  try {
+    const token = await resolveAuthToken();
+    const res = await fetch(`${API_BASE_URL}/agent/tts`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ text, voice }),
+    });
+    if (!res.ok) return null;
+    const blob = await res.blob();
+    return blob.size > 0 ? blob : null;
+  } catch {
+    return null;
   }
 }

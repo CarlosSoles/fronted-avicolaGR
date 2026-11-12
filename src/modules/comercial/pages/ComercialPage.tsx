@@ -9,8 +9,9 @@ import { apiClient } from '@/lib/api';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { ModuleTabs, ModuleTabItem } from '@/components/ui/ModuleTabs';
 import { OrderDateFilter } from '@/components/ui/OrderDateFilter';
-import { FlotaGpsMap } from '@/modules/gerencia/components/gps/FlotaGpsMap';
+import { LazyFlotaGpsMap as FlotaGpsMap } from '@/modules/gerencia/components/gps/LazyFlotaGpsMap';
 import { gpsSimulationStore } from '@/modules/gerencia/components/gps/gpsSimulationStore';
 import {
   DateFilterValue,
@@ -37,6 +38,8 @@ import {
   ZoneCageDensity,
   DEFAULT_ZONE_DENSITIES,
   resolveZoneDensity,
+  ESTADO_COMERCIAL_META,
+  deriveEstadoComercial,
 } from '@/types/comercial';
 import { TablaGeneralSaldoItem, OFFICIAL_FARMS } from '@/types/pecuaria';
 import {
@@ -216,23 +219,33 @@ export const ComercialPage: React.FC = () => {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
-  // Carga inicial de datos desde Backend
+  // Carga inicial de datos desde Backend en paralelo
   const loadInitialData = async () => {
     setIsLoading(true);
     try {
-      // 1. Cargar Pedidos
-      try {
-        const ordersData = await apiClient<SalesOrder[]>('/comercial/orders');
-        setOrders(ordersData);
-        localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersData));
-      } catch {
+      const [ordersRes, clientsRes, pecuariaRes, densitiesRes] = await Promise.allSettled([
+        apiClient<SalesOrder[]>('/comercial/orders'),
+        apiClient<Client[]>('/comercial/clients'),
+        apiClient<any>('/pecuaria/tabla-general-saldo'),
+        apiClient<ZoneCageDensity[]>('/admin/zone-densities'),
+      ]);
+
+      // 1. Pedidos
+      if (ordersRes.status === 'fulfilled' && Array.isArray(ordersRes.value)) {
+        setOrders(ordersRes.value);
+        localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersRes.value));
+      } else {
         const local = localStorage.getItem('avicola_comercial_orders');
-        if (local) setOrders(JSON.parse(local));
+        if (local) {
+          try {
+            setOrders(JSON.parse(local));
+          } catch {}
+        }
       }
 
-      // 2. Cargar Clientes
-      try {
-        const clientsData = await apiClient<Client[]>('/comercial/clients');
+      // 2. Clientes
+      if (clientsRes.status === 'fulfilled' && Array.isArray(clientsRes.value)) {
+        const clientsData = clientsRes.value;
         setClients((prev) => {
           const map = new Map<string, Client>();
           clientsData.forEach((c) => map.set(c.id, c));
@@ -243,7 +256,7 @@ export const ComercialPage: React.FC = () => {
           localStorage.setItem('avicola_comercial_clients', JSON.stringify(combined));
           return combined;
         });
-      } catch {
+      } else {
         const localClients = localStorage.getItem('avicola_comercial_clients');
         if (localClients) {
           try {
@@ -252,10 +265,9 @@ export const ComercialPage: React.FC = () => {
         }
       }
 
-      // 3. Cargar Disponibilidad de Pecuaria
-      try {
-        const pecuariaData = await apiClient<any>('/pecuaria/tabla-general-saldo');
-        const rawList = pecuariaData?.data || pecuariaData?.items;
+      // 3. Disponibilidad de Pecuaria
+      if (pecuariaRes.status === 'fulfilled') {
+        const rawList = pecuariaRes.value?.data || pecuariaRes.value?.items;
         if (rawList && Array.isArray(rawList) && rawList.length > 0) {
           const sanitized = rawList
             .filter((d: any) => (d.sex === 'MACHO' || d.sex === 'HEMBRA') && !d.is_closed)
@@ -269,18 +281,13 @@ export const ComercialPage: React.FC = () => {
           // Sin lotes en la base: no se inventan galpones
           setPecuariaItems([]);
         }
-      } catch {
-        // Sin conexión: se mantiene lo último cargado, sin generar datos sintéticos
       }
 
-      // 4. Cargar Densidades por Zona configuradas desde Administración
-      try {
-        const densitiesData = await apiClient<ZoneCageDensity[]>('/admin/zone-densities');
-        if (Array.isArray(densitiesData) && densitiesData.length > 0) {
-          setZoneDensities(densitiesData);
-          localStorage.setItem('avicola_zone_densities', JSON.stringify(densitiesData));
-        }
-      } catch {
+      // 4. Densidades por Zona configuradas desde Administración
+      if (densitiesRes.status === 'fulfilled' && Array.isArray(densitiesRes.value) && densitiesRes.value.length > 0) {
+        setZoneDensities(densitiesRes.value);
+        localStorage.setItem('avicola_zone_densities', JSON.stringify(densitiesRes.value));
+      } else {
         const localDensities = localStorage.getItem('avicola_zone_densities');
         if (localDensities) {
           try {
@@ -565,49 +572,64 @@ export const ComercialPage: React.FC = () => {
 
     setIsSubmitting(true);
     try {
-      const createdOrders: SalesOrder[] = [];
-      for (const line of orderLines) {
+      const builtLines = orderLines.map((line, idx) => {
         const qty = parseInt(line.requestedQuantityStr, 10) || 0;
         const densityNum = resolveZoneDensity(zoneDensities, zoneCode, line.sexPreference);
         const includeWeight =
           line.sexPreference === 'HEMBRA' &&
           line.minWeightStr.trim() !== '' &&
           line.maxWeightStr.trim() !== '';
-        const payload: OrderCreatePayload = {
-          client_id: selectedClientId || undefined,
-          client_name: clientName.trim(),
-          client_tax_id: clientTaxId.trim() || undefined,
-          seller_full_name: user?.full_name || 'Juan Carlos Pérez Gálvez',
-          zone_code: zoneCode,
-          target_delivery_date: targetDeliveryDate,
+        return {
+          id: line.id || `line-${idx + 1}`,
           requested_quantity: qty,
+          cages: computeCages(qty, densityNum),
           density_birds_per_cage: densityNum,
-          min_weight_kg: includeWeight ? parseFloat(line.minWeightStr) : undefined,
-          max_weight_kg: includeWeight ? parseFloat(line.maxWeightStr) : undefined,
-          sex_preference: line.sexPreference,
-          delivery_address: deliveryAddress.trim() || undefined,
-          delivery_latitude: deliveryLat ? parseFloat(deliveryLat) : null,
-          delivery_longitude: deliveryLng ? parseFloat(deliveryLng) : null,
-          is_draft: isDraft,
+          sex_preference: line.sexPreference as SexPreference,
+          min_weight_kg: includeWeight ? parseFloat(line.minWeightStr) : 2.2,
+          max_weight_kg: includeWeight ? parseFloat(line.maxWeightStr) : 2.5,
+          notes: null,
         };
+      });
 
-        const createdOrder = await apiClient<SalesOrder>('/comercial/orders', {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        createdOrders.push(createdOrder);
-      }
+      const totalQty = builtLines.reduce((acc, l) => acc + l.requested_quantity, 0);
+      const totalCages = builtLines.reduce((acc, l) => acc + (l.cages || 0), 0);
+      const weightedDensity = clampDensity(Math.round(totalQty / Math.max(1, totalCages)));
+      const uniqueSex = new Set(builtLines.map((l) => l.sex_preference));
+      const sexSummary: SexPreference = uniqueSex.size === 1 ? Array.from(uniqueSex)[0] : 'MIXTO';
 
-      const updated = [...createdOrders.slice().reverse(), ...orders];
+      const payload: OrderCreatePayload = {
+        client_id: selectedClientId || undefined,
+        client_name: clientName.trim(),
+        client_tax_id: clientTaxId.trim() || undefined,
+        seller_full_name: user?.full_name || 'Juan Carlos Pérez Gálvez',
+        zone_code: zoneCode,
+        target_delivery_date: targetDeliveryDate,
+        requested_quantity: totalQty,
+        density_birds_per_cage: weightedDensity,
+        min_weight_kg: Math.min(...builtLines.map((l) => l.min_weight_kg)),
+        max_weight_kg: Math.max(...builtLines.map((l) => l.max_weight_kg)),
+        sex_preference: sexSummary,
+        delivery_address: deliveryAddress.trim() || undefined,
+        delivery_latitude: deliveryLat ? parseFloat(deliveryLat) : null,
+        delivery_longitude: deliveryLng ? parseFloat(deliveryLng) : null,
+        order_lines: builtLines,
+        is_draft: isDraft,
+      };
+
+      const createdOrder = await apiClient<SalesOrder>('/comercial/orders', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      });
+
+      const updated = [createdOrder, ...orders];
       setOrders(updated);
       localStorage.setItem('avicola_comercial_orders', JSON.stringify(updated));
 
-      if (createdOrders.length === 1) {
-        showToast(`Pedido [${createdOrders[0].order_number}] generado exitosamente.`);
-      } else {
-        const nums = createdOrders.map((o) => o.order_number).join(', ');
-        showToast(`${createdOrders.length} líneas de pedido generadas exitosamente (${nums}).`);
-      }
+      showToast(
+        builtLines.length > 1
+          ? `Pedido [${createdOrder.order_number}] con ${builtLines.length} líneas generado exitosamente.`
+          : `Pedido [${createdOrder.order_number}] generado exitosamente.`
+      );
 
       // Limpiar formulario y cambiar a pestaña Programación
       setDeliveryAddress('');
@@ -898,60 +920,7 @@ export const ComercialPage: React.FC = () => {
     });
   }, [clients, clientSearchQuery, clientZoneFilter]);
 
-  // ============================================================================
-  // MAPA DE ESTADOS COMERCIALES (7 estados solicitados)
-  // ============================================================================
-  type EstadoComercial =
-    | 'PREPROGRAMACION'
-    | 'PROGRAMADO'
-    | 'PROGRAMADO_CON_CAMION'
-    | 'CONFIRMADO_ARIS'
-    | 'EN_RUTA'
-    | 'TERMINADO'
-    | 'CANCELADO';
-
-  interface EstadoComercialInfo {
-    label: string;
-    color: string;       // texto
-    bgColor: string;     // badge bg
-    borderColor: string;
-  }
-
-  const ESTADOS_COMERCIALES: Record<EstadoComercial, EstadoComercialInfo> = {
-    PREPROGRAMACION:       { label: 'Preprogramación',          color: 'text-amber-600 dark:text-amber-400',        bgColor: 'bg-amber-50 dark:bg-amber-950/30',        borderColor: 'border-amber-300 dark:border-amber-800' },
-    PROGRAMADO:            { label: 'Programado',               color: 'text-sky-700 dark:text-sky-400',            bgColor: 'bg-sky-50 dark:bg-sky-950/30',             borderColor: 'border-sky-300 dark:border-sky-800' },
-    PROGRAMADO_CON_CAMION: { label: 'Programado con camión',    color: 'text-indigo-700 dark:text-indigo-400',      bgColor: 'bg-indigo-50 dark:bg-indigo-950/30',       borderColor: 'border-indigo-300 dark:border-indigo-800' },
-    CONFIRMADO_ARIS:       { label: 'Confirmado (código Aris)', color: 'text-emerald-700 dark:text-emerald-400',    bgColor: 'bg-emerald-50 dark:bg-emerald-950/30',     borderColor: 'border-emerald-400 dark:border-emerald-700' },
-    EN_RUTA:               { label: 'En ruta',                  color: 'text-blue-700 dark:text-blue-400',          bgColor: 'bg-blue-50 dark:bg-blue-950/30',           borderColor: 'border-blue-300 dark:border-blue-800' },
-    TERMINADO:             { label: 'Terminado',                color: 'text-slate-600 dark:text-slate-400',        bgColor: 'bg-slate-100 dark:bg-slate-800/50',        borderColor: 'border-slate-300 dark:border-slate-700' },
-    CANCELADO:             { label: 'Cancelado',                color: 'text-rose-500 dark:text-rose-400',          bgColor: 'bg-rose-50 dark:bg-rose-950/30',           borderColor: 'border-rose-300 dark:border-rose-800/60' },
-  };
-
-  const estadoComercialLabels: EstadoComercial[] = [
-    'PREPROGRAMACION',
-    'PROGRAMADO',
-    'PROGRAMADO_CON_CAMION',
-    'CONFIRMADO_ARIS',
-    'EN_RUTA',
-    'TERMINADO',
-    'CANCELADO',
-  ];
-
-  /** Deriva el estado comercial de 7 valores a partir de los campos del pedido. */
-  function deriveEstadoComercial(o: SalesOrder): EstadoComercial {
-    if (o.status === 'CANCELADO') return 'CANCELADO';
-    if (o.dispatch_phase === 'ENTREGADO_CONFORME' || o.status === 'DESPACHADO') return 'TERMINADO';
-    if (o.dispatch_phase === 'EN_TRANSITO') return 'EN_RUTA';
-    if (o.dispatch_phase === 'EN_GRANJA_CARGANDO' || (o.status === 'APROBADO_RESERVADO' && o.codigo_aris)) {
-      // Confirmado (código Aris): el pedido tiene código Aris generado por el gestor
-      // Puede estar en EN_GRANJA_CARGANDO (llegó a granja) o aún en TRANSPORTE_ASIGNADO
-      return 'CONFIRMADO_ARIS';
-    }
-    if (o.status === 'APROBADO_RESERVADO' && o.transport_assigned) return 'PROGRAMADO_CON_CAMION';
-    if (o.status === 'APROBADO_RESERVADO') return 'PROGRAMADO';
-    // BORRADOR, REGISTRADO, CON_OBSERVACION, o cualquier otro cae en preprogramación
-    return 'PREPROGRAMACION';
-  }
+  const ESTADOS_COMERCIALES = ESTADO_COMERCIAL_META;
 
   // Filtrado de pedidos para la pestaña Programación
   const filteredOrders = useMemo(() => {
@@ -1037,61 +1006,51 @@ export const ComercialPage: React.FC = () => {
       </div>
 
       {/* Selector de Pestañas Principales */}
-      <div className="flex flex-wrap items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-2">
-        <button
-          type="button"
-          onClick={() => setActiveTab('programacion')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'programacion'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-          }`}
-        >
-          <Calendar className="w-4 h-4" />
-          <span>📅 Programación de Pedidos ({orders.length})</span>
-        </button>
-
-        {canCreateOrders && (
-          <button
-            type="button"
-            onClick={() => setActiveTab('nuevo_pedido')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
-              activeTab === 'nuevo_pedido'
-                ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-            }`}
-          >
-            <PlusCircle className="w-4 h-4" />
-            <span>➕ Nuevo Pedido de Venta</span>
-          </button>
-        )}
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('clientes')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'clientes'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>👥 Clientes ({clients.length})</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('monitoreo')}
-          className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all ${
-            activeTab === 'monitoreo'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/25'
-              : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-800'
-          }`}
-        >
-          <MapPin className="w-4 h-4" />
-          <span>🚚 Mis Transportes ({transportOrders.length})</span>
-        </button>
-      </div>
+      <ModuleTabs
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        tabs={([
+          {
+            id: 'programacion',
+            label: 'Programación de Pedidos',
+            icon: <Calendar className="w-4 h-4 shrink-0" />,
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {orders.length}
+              </span>
+            ),
+          },
+          ...(canCreateOrders
+            ? [
+                {
+                  id: 'nuevo_pedido' as const,
+                  label: 'Nuevo Pedido de Venta',
+                  icon: <PlusCircle className="w-4 h-4 shrink-0" />,
+                },
+              ]
+            : []),
+          {
+            id: 'clientes',
+            label: 'Clientes',
+            icon: <Building2 className="w-4 h-4 shrink-0" />,
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {clients.length}
+              </span>
+            ),
+          },
+          {
+            id: 'monitoreo',
+            label: 'Mis Transportes',
+            icon: <MapPin className="w-4 h-4 text-emerald-600 shrink-0" />,
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {transportOrders.length}
+              </span>
+            ),
+          },
+        ] as ModuleTabItem<'programacion' | 'nuevo_pedido' | 'clientes' | 'monitoreo'>[])}
+      />
 
       {/* ========================================================================= */}
       {/* PESTAÑA 1: APARTADO DE "PROGRAMACIÓN" (REVISIÓN DE ESTADO Y DAR OK GESTOR) */}
@@ -1175,11 +1134,12 @@ export const ComercialPage: React.FC = () => {
                 className="px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-200"
               >
                 <option value="ALL">Todos los Estados</option>
-                <option value="PREPROGRAMACION">📋 Preprogramación</option>
+                <option value="BORRADOR">📝 En borrador</option>
+                <option value="PREPROGRAMACION">📋 Preprogramado</option>
                 <option value="PROGRAMADO">📌 Programado</option>
                 <option value="PROGRAMADO_CON_CAMION">🚛 Programado con camión</option>
-                <option value="CONFIRMADO_ARIS">✅ Confirmado (código Aris)</option>
-                <option value="EN_RUTA">🚚 En ruta</option>
+                <option value="CONFIRMADO">✅ Confirmado (en granja)</option>
+                <option value="DESPACHADO">🚚 Despachado (en ruta)</option>
                 <option value="TERMINADO">✔ Terminado</option>
                 <option value="CANCELADO">❌ Cancelado</option>
                 <option value="CON_OBSERVACION">⚠ Con observación</option>
@@ -1283,6 +1243,11 @@ export const ComercialPage: React.FC = () => {
                             <div className="font-mono font-black text-sm text-slate-950 dark:text-white">
                               {order.requested_quantity.toLocaleString()}
                             </div>
+                            {order.order_lines && order.order_lines.length > 1 && (
+                              <div className="text-[10px] text-slate-400 font-semibold">
+                                {order.order_lines.length} líneas
+                              </div>
+                            )}
                           </td>
 
                           {/* Sexo */}
@@ -1293,18 +1258,26 @@ export const ComercialPage: React.FC = () => {
                             {order.sex_preference === 'HEMBRA' && (
                               <span className="text-rose-700 dark:text-rose-400 font-bold">Hembra</span>
                             )}
+                            {order.sex_preference === 'MIXTO' && (
+                              <span className="text-violet-700 dark:text-violet-400 font-bold">Mixto</span>
+                            )}
                             {(!order.sex_preference || order.sex_preference === 'INDISTINTO') && (
                               <span className="text-slate-600 dark:text-slate-400 font-medium">Indistinto</span>
                             )}
                           </td>
 
-                          {/* Estado (badge con los 7 estados solicitados) */}
+                          {/* Estado (flujo unificado de 7 estados) */}
                           <td className="py-3 px-4 text-center whitespace-nowrap">
                             <span
                               className={`inline-block px-2.5 py-1 rounded-lg text-[11px] font-extrabold border ${ecoInfo.bgColor} ${ecoInfo.color} ${ecoInfo.borderColor}`}
                             >
                               {ecoInfo.label}
                             </span>
+                            {order.codigo_aris && (
+                              <div className="text-[10px] font-mono font-bold text-violet-700 dark:text-violet-400 mt-0.5">
+                                ARIS: {order.codigo_aris}
+                              </div>
+                            )}
                           </td>
                         </tr>
                       );

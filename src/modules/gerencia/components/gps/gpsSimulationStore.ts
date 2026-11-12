@@ -4,6 +4,9 @@ import {
   createSimulatedTruckFromOrder,
   calculateBearing,
   calculateDistanceKm,
+  setDynamicFarmCoordinates,
+  fetchOsrmRoadRoute,
+  getCachedOsrmRoute,
 } from './gpsRoutesData';
 
 const STORAGE_KEY = 'avicola_gr_gps_sim_state_v8';
@@ -28,24 +31,34 @@ class GpsSimulationStore {
   private globalSpeedMultiplier: 1 | 2 | 5 = 1;
   private isSimulatingAll: boolean = false;
   private listeners: Set<() => void> = new Set();
-  private intervalId: any = null;
+  private intervalId: ReturnType<typeof setInterval> | null = null;
+  private lastStorageWriteAt = 0;
 
   constructor() {
     this.loadFromStorage();
-    this.startLoop();
+    this.syncLoopState();
 
     // Sincronizar entre pestañas del navegador en tiempo real
     if (typeof window !== 'undefined') {
       window.addEventListener('storage', (e) => {
         if (e.key === STORAGE_KEY && e.newValue) {
-          this.applyStoredState(JSON.parse(e.newValue));
+          try {
+            this.applyStoredState(JSON.parse(e.newValue));
+          } catch {
+            // Ignorar JSON corrupto de otra pestaña
+          }
         }
       });
     }
   }
 
-  private saveToStorage() {
+  private saveToStorage(immediate = true) {
     if (typeof window === 'undefined') return;
+    const now = Date.now();
+    if (!immediate && now - this.lastStorageWriteAt < 2000) {
+      return;
+    }
+    this.lastStorageWriteAt = now;
     try {
       const payload: StoredSimState = {
         trucksState: this.trucks.map((t) => ({
@@ -59,7 +72,7 @@ class GpsSimulationStore {
         })),
         globalSpeedMultiplier: this.globalSpeedMultiplier,
         isSimulatingAll: this.isSimulatingAll,
-        lastUpdated: Date.now(),
+        lastUpdated: now,
       };
       localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
     } catch {
@@ -101,11 +114,30 @@ class GpsSimulationStore {
       };
     });
 
+    this.syncLoopState();
     this.notify();
   }
 
+  private syncLoopState(forceRestart = false) {
+    const hasPlaying = this.trucks.some((t) => t.isPlaying);
+    if (!hasPlaying) {
+      if (this.intervalId) {
+        clearInterval(this.intervalId);
+        this.intervalId = null;
+      }
+      return;
+    }
+    if (this.intervalId && !forceRestart) return;
+    this.startLoop();
+  }
+
   private startLoop() {
-    if (this.intervalId) clearInterval(this.intervalId);
+    if (this.intervalId) {
+      clearInterval(this.intervalId);
+      this.intervalId = null;
+    }
+
+    if (!this.trucks.some((t) => t.isPlaying)) return;
 
     const intervalTime = 600 / this.globalSpeedMultiplier;
     this.intervalId = setInterval(() => {
@@ -157,8 +189,13 @@ class GpsSimulationStore {
         };
       });
 
+      const stillPlaying = this.trucks.some((t) => t.isPlaying);
+      if (!stillPlaying) {
+        this.syncLoopState();
+      }
+
       if (changed) {
-        this.saveToStorage();
+        this.saveToStorage(!stillPlaying);
         this.notify();
       }
     }, intervalTime);
@@ -190,7 +227,8 @@ class GpsSimulationStore {
   public toggleAll() {
     this.isSimulatingAll = !this.isSimulatingAll;
     this.trucks = this.trucks.map((t) => ({ ...t, isPlaying: this.isSimulatingAll }));
-    this.saveToStorage();
+    this.syncLoopState();
+    this.saveToStorage(true);
     this.notify();
   }
 
@@ -198,14 +236,15 @@ class GpsSimulationStore {
     this.trucks = this.trucks.map((t) =>
       t.id === truckId ? { ...t, isPlaying: !t.isPlaying } : t
     );
-    this.saveToStorage();
+    this.syncLoopState();
+    this.saveToStorage(true);
     this.notify();
   }
 
   public setGlobalSpeed(speed: 1 | 2 | 5) {
     this.globalSpeedMultiplier = speed;
-    this.startLoop(); // reiniciar ticker con nueva velocidad
-    this.saveToStorage();
+    this.syncLoopState(true); // reiniciar ticker con nueva velocidad solo si hay unidades activas
+    this.saveToStorage(true);
     this.notify();
   }
 
@@ -263,7 +302,8 @@ class GpsSimulationStore {
     if (assignedOrders.length === 0) {
       if (this.trucks.length > 0) {
         this.trucks = [];
-        this.saveToStorage();
+        this.syncLoopState();
+        this.saveToStorage(true);
         this.notify();
       }
       return;
@@ -279,9 +319,92 @@ class GpsSimulationStore {
       nextTrucks.push(built);
     });
 
-    this.trucks = nextTrucks;
-    this.saveToStorage();
-    this.notify();
+    const unchanged =
+      nextTrucks.length === this.trucks.length &&
+      nextTrucks.every((t, idx) => {
+        const prev = this.trucks[idx];
+        const prevStart = prev?.fullPath[0];
+        const nextStart = t.fullPath[0];
+        const prevEnd = prev?.fullPath[prev.fullPath.length - 1];
+        const nextEnd = t.fullPath[t.fullPath.length - 1];
+        return (
+          prev &&
+          prev.id === t.id &&
+          prev.plate === t.plate &&
+          prev.orderId === t.orderId &&
+          prev.status === t.status &&
+          prev.currentIndex === t.currentIndex &&
+          prev.isPlaying === t.isPlaying &&
+          prev.originFarm === t.originFarm &&
+          prev.destinationZone === t.destinationZone &&
+          prev.fullPath.length === t.fullPath.length &&
+          Math.abs((prevStart?.lat || 0) - (nextStart?.lat || 0)) < 0.0001 &&
+          Math.abs((prevStart?.lng || 0) - (nextStart?.lng || 0)) < 0.0001 &&
+          Math.abs((prevEnd?.lat || 0) - (nextEnd?.lat || 0)) < 0.0001 &&
+          Math.abs((prevEnd?.lng || 0) - (nextEnd?.lng || 0)) < 0.0001
+        );
+      });
+
+    if (!unchanged) {
+      this.trucks = nextTrucks;
+      this.syncLoopState();
+      this.saveToStorage(true);
+      this.notify();
+    }
+
+    // Hidratar rutas viales reales desde OSRM para que cada camión siga carreteras reales
+    nextTrucks.forEach((t) => {
+      const origin = t.fullPath[0];
+      const dest = t.fullPath[t.fullPath.length - 1];
+      if (!origin || !dest) return;
+      if (getCachedOsrmRoute(origin, dest)) return;
+
+      void fetchOsrmRoadRoute(origin, dest).then((road) => {
+        if (!road || road.path.length < 2) return;
+        let updated = false;
+        this.trucks = this.trucks.map((cur) => {
+          if (cur.id !== t.id) return cur;
+          const curStart = cur.fullPath[0];
+          const curEnd = cur.fullPath[cur.fullPath.length - 1];
+          if (
+            !curStart ||
+            !curEnd ||
+            calculateDistanceKm(curStart, origin) > 0.05 ||
+            calculateDistanceKm(curEnd, dest) > 0.05
+          ) {
+            return cur;
+          }
+          const ratio = cur.fullPath.length > 1 ? cur.currentIndex / (cur.fullPath.length - 1) : 0;
+          const nextIdx = Math.min(
+            road.path.length - 1,
+            Math.max(0, Math.round(ratio * (road.path.length - 1)))
+          );
+          updated = true;
+          return {
+            ...cur,
+            fullPath: road.path,
+            waypoints: [
+              road.path[0],
+              road.path[Math.floor(road.path.length / 2)],
+              road.path[road.path.length - 1],
+            ],
+            currentIndex: nextIdx,
+            currentCoord: road.path[nextIdx] || road.path[0],
+            etaMinutes: Math.max(1, Math.round(road.durationMin * (1 - cur.progressPercent / 100))),
+          };
+        });
+        if (updated) {
+          this.saveToStorage(true);
+          this.notify();
+        }
+      });
+    });
+  }
+
+  public setFarmCoordinates(
+    farms: Array<{ code?: string; latitude?: number | null; longitude?: number | null }>
+  ) {
+    setDynamicFarmCoordinates(farms);
   }
 }
 

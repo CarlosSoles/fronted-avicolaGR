@@ -153,7 +153,18 @@ export type OrderStatus =
   | 'DESPACHADO'
   | 'CANCELADO';
 
-export type SexPreference = 'MACHO' | 'HEMBRA' | 'INDISTINTO';
+export type SexPreference = 'MACHO' | 'HEMBRA' | 'INDISTINTO' | 'MIXTO';
+
+export interface OrderLine {
+  id: string;
+  requested_quantity: number;
+  cages?: number;
+  density_birds_per_cage: number;
+  sex_preference: SexPreference;
+  min_weight_kg: number;
+  max_weight_kg: number;
+  notes?: string | null;
+}
 
 export interface SalesOrder {
   id: string;
@@ -174,6 +185,7 @@ export interface SalesOrder {
   sex_preference?: SexPreference;
   estimated_total_kg?: number;
   estimated_cages?: number;
+  order_lines?: OrderLine[];
   suggested_farm_code?: string;
   suggested_barn_code?: string;
   assigned_farm_code?: string;
@@ -294,7 +306,181 @@ export interface OrderCreatePayload {
   delivery_address?: string;
   delivery_latitude?: number | null;
   delivery_longitude?: number | null;
+  order_lines?: OrderLine[];
   is_draft?: boolean;
+  auto_reserve?: boolean;
+}
+
+export type EstadoComercial =
+  | 'BORRADOR'
+  | 'PREPROGRAMACION'
+  | 'PROGRAMADO'
+  | 'PROGRAMADO_CON_CAMION'
+  | 'CONFIRMADO'
+  | 'DESPACHADO'
+  | 'TERMINADO'
+  | 'CANCELADO';
+
+export interface EstadoComercialInfo {
+  label: string;
+  color: string;
+  bgColor: string;
+  borderColor: string;
+  dotColor: string;
+}
+
+export const ESTADO_COMERCIAL_ORDER: EstadoComercial[] = [
+  'BORRADOR',
+  'PREPROGRAMACION',
+  'PROGRAMADO',
+  'PROGRAMADO_CON_CAMION',
+  'CONFIRMADO',
+  'DESPACHADO',
+  'TERMINADO',
+  'CANCELADO',
+];
+
+export const ESTADO_COMERCIAL_META: Record<EstadoComercial, EstadoComercialInfo> = {
+  BORRADOR: {
+    label: 'En borrador',
+    color: 'text-slate-700 dark:text-slate-300',
+    bgColor: 'bg-slate-100 dark:bg-slate-800/70',
+    borderColor: 'border-slate-300 dark:border-slate-700',
+    dotColor: 'bg-slate-400',
+  },
+  PREPROGRAMACION: {
+    label: 'Preprogramado',
+    color: 'text-amber-700 dark:text-amber-400',
+    bgColor: 'bg-amber-50 dark:bg-amber-950/30',
+    borderColor: 'border-amber-300 dark:border-amber-800',
+    dotColor: 'bg-amber-500',
+  },
+  PROGRAMADO: {
+    label: 'Programado',
+    color: 'text-sky-700 dark:text-sky-400',
+    bgColor: 'bg-sky-50 dark:bg-sky-950/30',
+    borderColor: 'border-sky-300 dark:border-sky-800',
+    dotColor: 'bg-sky-500',
+  },
+  PROGRAMADO_CON_CAMION: {
+    label: 'Programado con camión',
+    color: 'text-indigo-700 dark:text-indigo-400',
+    bgColor: 'bg-indigo-50 dark:bg-indigo-950/30',
+    borderColor: 'border-indigo-300 dark:border-indigo-800',
+    dotColor: 'bg-indigo-500',
+  },
+  CONFIRMADO: {
+    label: 'Confirmado',
+    color: 'text-emerald-700 dark:text-emerald-400',
+    bgColor: 'bg-emerald-50 dark:bg-emerald-950/30',
+    borderColor: 'border-emerald-400 dark:border-emerald-700',
+    dotColor: 'bg-emerald-500',
+  },
+  DESPACHADO: {
+    label: 'Despachado',
+    color: 'text-blue-700 dark:text-blue-400',
+    bgColor: 'bg-blue-50 dark:bg-blue-950/30',
+    borderColor: 'border-blue-300 dark:border-blue-800',
+    dotColor: 'bg-blue-600',
+  },
+  TERMINADO: {
+    label: 'Terminado',
+    color: 'text-slate-700 dark:text-slate-300',
+    bgColor: 'bg-slate-100 dark:bg-slate-800/70',
+    borderColor: 'border-slate-300 dark:border-slate-700',
+    dotColor: 'bg-slate-500',
+  },
+  CANCELADO: {
+    label: 'Cancelado',
+    color: 'text-rose-600 dark:text-rose-400',
+    bgColor: 'bg-rose-50 dark:bg-rose-950/30',
+    borderColor: 'border-rose-300 dark:border-rose-800/60',
+    dotColor: 'bg-rose-500',
+  },
+};
+
+/**
+ * Máquina de estados unificada del pedido:
+ * Preprogramado -> Programado -> Programado con camión -> (Aris) -> Confirmado (llegó a granja) -> Despachado (en ruta) -> Terminado (entregado).
+ */
+export function deriveEstadoComercial(
+  o: Pick<SalesOrder, 'status' | 'transport_assigned' | 'dispatch_phase'>
+): EstadoComercial {
+  if (o.status === 'CANCELADO') return 'CANCELADO';
+  if (o.status === 'BORRADOR') return 'BORRADOR';
+  if (o.dispatch_phase === 'ENTREGADO_CONFORME') return 'TERMINADO';
+  if (o.dispatch_phase === 'EN_TRANSITO') return 'DESPACHADO';
+  if (o.status === 'DESPACHADO') return 'TERMINADO';
+  if (o.dispatch_phase === 'EN_GRANJA_CARGANDO') return 'CONFIRMADO';
+  if (o.status === 'APROBADO_RESERVADO' && o.transport_assigned) return 'PROGRAMADO_CON_CAMION';
+  if (o.status === 'APROBADO_RESERVADO') return 'PROGRAMADO';
+  return 'PREPROGRAMACION';
+}
+
+export function getOrderLines(
+  o: Pick<
+    SalesOrder,
+    | 'order_lines'
+    | 'requested_quantity'
+    | 'estimated_cages'
+    | 'density_birds_per_cage'
+    | 'sex_preference'
+    | 'min_weight_kg'
+    | 'max_weight_kg'
+  >
+): OrderLine[] {
+  if (Array.isArray(o.order_lines) && o.order_lines.length > 0) {
+    return o.order_lines.map((l, idx) => ({
+      id: l.id || `line-${idx + 1}`,
+      requested_quantity: Number(l.requested_quantity) || 0,
+      cages: l.cages ?? computeCages(Number(l.requested_quantity) || 0, l.density_birds_per_cage),
+      density_birds_per_cage: clampDensity(l.density_birds_per_cage),
+      sex_preference: (l.sex_preference as SexPreference) || 'MACHO',
+      min_weight_kg: Number(l.min_weight_kg) || 2.2,
+      max_weight_kg: Number(l.max_weight_kg) || 2.5,
+      notes: l.notes || null,
+    }));
+  }
+  const density = clampDensity(o.density_birds_per_cage);
+  const qty = Number(o.requested_quantity) || 0;
+  return [
+    {
+      id: 'line-1',
+      requested_quantity: qty,
+      cages: o.estimated_cages ?? computeCages(qty, density),
+      density_birds_per_cage: density,
+      sex_preference: o.sex_preference || 'MACHO',
+      min_weight_kg: Number(o.min_weight_kg) || 2.2,
+      max_weight_kg: Number(o.max_weight_kg) || 2.5,
+      notes: null,
+    },
+  ];
+}
+
+export interface OrderUpdatePayload {
+  client_id?: string;
+  client_name?: string;
+  client_tax_id?: string;
+  zone_code?: string;
+  seller_full_name?: string;
+  seller_username?: string;
+  delivery_address?: string;
+  delivery_latitude?: number | null;
+  delivery_longitude?: number | null;
+  target_delivery_date?: string;
+  requested_quantity?: number;
+  allocated_quantity?: number;
+  density_birds_per_cage?: number;
+  min_weight_kg?: number;
+  max_weight_kg?: number;
+  sex_preference?: SexPreference;
+  farm_code?: string;
+  barn_code?: string;
+  external_reference?: string;
+  notes?: string;
+  order_lines?: OrderLine[];
+  is_draft?: boolean;
+  force_reservation?: boolean;
 }
 
 export interface OrderActionPayload {

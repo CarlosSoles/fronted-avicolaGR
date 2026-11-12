@@ -5,6 +5,7 @@ import { useAuth } from '@/modules/auth/context/AuthContext';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
+import { ModuleTabs } from '@/components/ui/ModuleTabs';
 import {
   ZoneCageDensity,
   DEFAULT_ZONE_DENSITIES,
@@ -727,68 +728,48 @@ export const AdminPage: React.FC = () => {
       </div>
 
       {/* Tabs Principales */}
-      <div className="flex items-center gap-2 border-b border-slate-200 dark:border-slate-800 pb-px">
-        <button
-          type="button"
-          onClick={() => setActiveTab('usuarios')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all ${
-            activeTab === 'usuarios'
-              ? 'border-red-600 text-red-600 dark:text-red-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Users className="w-4 h-4" />
-          <span>Gestión de Usuarios &amp; Accesos</span>
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-            {totalUsers}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('granjas')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all ${
-            activeTab === 'granjas'
-              ? 'border-red-600 text-red-600 dark:text-red-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Building2 className="w-4 h-4" />
-          <span>Catálogo de Granjas Oficiales</span>
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-            {farms.length}
-          </span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('parametros')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all ${
-            activeTab === 'parametros'
-              ? 'border-red-600 text-red-600 dark:text-red-400'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Sliders className="w-4 h-4" />
-          <span>Parámetros del Sistema</span>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab('simulador_gps')}
-          className={`flex items-center gap-2 px-4 py-2.5 text-xs font-bold border-b-2 transition-all ${
-            activeTab === 'simulador_gps'
-              ? 'border-emerald-600 text-emerald-600 dark:text-emerald-400 font-black'
-              : 'border-transparent text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
-          }`}
-        >
-          <Truck className="w-4 h-4 text-emerald-600" />
-          <span>Simulador GPS Flota</span>
-          <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white">
-            Control Demo
-          </span>
-        </button>
-      </div>
+      <ModuleTabs
+        activeTab={activeTab}
+        onChange={setActiveTab}
+        tabs={[
+          {
+            id: 'usuarios',
+            label: 'Gestión de Usuarios & Accesos',
+            icon: <Users className="w-4 h-4 shrink-0" />,
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {totalUsers}
+              </span>
+            ),
+          },
+          {
+            id: 'granjas',
+            label: 'Catálogo de Granjas Oficiales',
+            icon: <Building2 className="w-4 h-4 shrink-0" />,
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
+                {farms.length}
+              </span>
+            ),
+          },
+          {
+            id: 'parametros',
+            label: 'Parámetros del Sistema',
+            icon: <Sliders className="w-4 h-4 shrink-0" />,
+          },
+          {
+            id: 'simulador_gps',
+            label: 'Simulador GPS Flota',
+            icon: <Truck className="w-4 h-4 text-emerald-600 shrink-0" />,
+            activeClassName: 'border-emerald-600 text-emerald-600 dark:text-emerald-400 font-black',
+            badge: (
+              <span className="px-1.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-500 text-white">
+                Control Demo
+              </span>
+            ),
+          },
+        ]}
+      />
 
       {/* ========================================================================= */}
       {/* TAB 1: GESTIÓN DE USUARIOS */}

@@ -1,16 +1,52 @@
-import React from 'react';
+import React, { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../modules/auth/context/AuthContext';
 import { LoginPage } from '../modules/auth/pages/LoginPage';
 import { DashboardLayout } from '../layouts/DashboardLayout';
-import { PecuariaDashboardPage } from '../modules/pecuaria/pages/PecuariaDashboardPage';
-import { ComercialPage } from '../modules/comercial/pages/ComercialPage';
-import { GestionComercialPage } from '../modules/gerencia/pages/GestionComercialPage';
-import { ControlFlotaPage } from '../modules/flota/pages/ControlFlotaPage';
-import { AdminPage } from '../modules/admin/pages/AdminPage';
-import { AccountPage } from '../modules/account/pages/AccountPage';
-import { NotificationsPage } from '../modules/notifications/pages/NotificationsPage';
 import { UserRole } from '../types/auth';
+
+const PecuariaDashboardPage = lazy(() =>
+  import('../modules/pecuaria/pages/PecuariaDashboardPage').then((m) => ({
+    default: m.PecuariaDashboardPage,
+  }))
+);
+const ComercialPage = lazy(() =>
+  import('../modules/comercial/pages/ComercialPage').then((m) => ({
+    default: m.ComercialPage,
+  }))
+);
+const GestionComercialPage = lazy(() =>
+  import('../modules/gerencia/pages/GestionComercialPage').then((m) => ({
+    default: m.GestionComercialPage,
+  }))
+);
+const ControlFlotaPage = lazy(() =>
+  import('../modules/flota/pages/ControlFlotaPage').then((m) => ({
+    default: m.ControlFlotaPage,
+  }))
+);
+const AdminPage = lazy(() =>
+  import('../modules/admin/pages/AdminPage').then((m) => ({
+    default: m.AdminPage,
+  }))
+);
+const AccountPage = lazy(() =>
+  import('../modules/account/pages/AccountPage').then((m) => ({
+    default: m.AccountPage,
+  }))
+);
+const NotificationsPage = lazy(() =>
+  import('../modules/notifications/pages/NotificationsPage').then((m) => ({
+    default: m.NotificationsPage,
+  }))
+);
+
+const RouteFallback: React.FC = () => (
+  <div className="min-h-[60vh] flex flex-col items-center justify-center gap-2 text-slate-500">
+    <div className="w-7 h-7 border-2 border-red-600 border-t-transparent rounded-full animate-spin" />
+    <span className="text-xs font-medium">Cargando módulo...</span>
+  </div>
+);
 
 export const getDefaultRouteForRole = (role?: UserRole): string => {
   switch (role) {
@@ -65,7 +101,8 @@ export const AppRoutes: React.FC = () => {
   const { user } = useAuth();
 
   return (
-    <Routes>
+    <Suspense fallback={<RouteFallback />}>
+      <Routes>
       {/* Ruta pública: Login */}
       <Route
         path="/login"
@@ -148,5 +185,6 @@ export const AppRoutes: React.FC = () => {
         element={<Navigate to={user ? getDefaultRouteForRole(user.role) : '/login'} replace />}
       />
     </Routes>
+    </Suspense>
   );
 };

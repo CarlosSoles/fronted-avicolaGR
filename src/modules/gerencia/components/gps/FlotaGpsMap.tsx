@@ -79,7 +79,7 @@ const createTruckIcon = (plate: string, color: string, bearing: number, isMoving
     iconSize: [0, 0],
   });
 
-interface FlotaGpsMapProps {
+export interface FlotaGpsMapProps {
   initialSelectedTruckId?: string;
   readOnly?: boolean; // Por defecto true en el módulo Gestor Comercial
   onClose?: () => void;
