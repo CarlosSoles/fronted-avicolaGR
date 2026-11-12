@@ -73,6 +73,7 @@ export const AccountPage: React.FC = () => {
     gestor_comercial: 'Gestor Comercial',
     gerente_comercial: 'Gerente Comercial',
     vendedor: 'Vendedor Comercial',
+    controlador_flota: 'Controlador de Flota',
   };
 
   return (
@@ -212,6 +213,7 @@ export const AccountPage: React.FC = () => {
                 {user?.role === 'registrador_pecuario' && 'Acceso a registro de pesajes de campo ave por ave y aves especiales.'}
                 {user?.role?.includes('comercial') && 'Acceso a asignación y gestión de pedidos de clientes.'}
                 {user?.role === 'vendedor' && 'Acceso a captura de pedidos y clientes en ruta comercial.'}
+                {user?.role === 'controlador_flota' && 'Acceso al Módulo Control de Flota: Asignación de transporte a pedidos programados y gestión de camiones de distribución.'}
               </p>
             </div>
 

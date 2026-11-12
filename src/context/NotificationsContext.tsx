@@ -4,7 +4,7 @@ import { apiClient } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 import { UserRole } from '@/types/auth';
 
-export type NotificationCategory = 'pecuaria' | 'gestion_comercial' | 'comercial' | 'admin';
+export type NotificationCategory = 'pecuaria' | 'gestion_comercial' | 'comercial' | 'control_flota' | 'admin';
 
 export interface NotificationItem {
   id: string;
@@ -43,6 +43,8 @@ export const getCategoryForRole = (role?: UserRole): NotificationCategory => {
       return 'gestion_comercial';
     case 'vendedor':
       return 'comercial';
+    case 'controlador_flota':
+      return 'control_flota';
     case 'admin_sistema':
     default:
       return 'admin';

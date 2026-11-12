@@ -38,6 +38,35 @@ export function computeCages(birds: number, density?: number | null): number {
   return Math.ceil(birds / clampDensity(density));
 }
 
+export interface ZoneCageDensity {
+  zone_code: string;
+  zone_name: string;
+  male_density: number;
+  female_density: number;
+  updated_at?: string | null;
+}
+
+export const DEFAULT_ZONE_DENSITIES: ZoneCageDensity[] = [
+  { zone_code: 'METROPOLITANA', zone_name: 'Metropolitana (Lima)', male_density: 9, female_density: 11 },
+  { zone_code: 'NORTE', zone_name: 'Zona Norte', male_density: 8, female_density: 11 },
+  { zone_code: 'CENTRO', zone_name: 'Zona Centro', male_density: 9, female_density: 11 },
+  { zone_code: 'SUR', zone_name: 'Zona Sur', male_density: 8, female_density: 11 },
+];
+
+/** Obtiene la densidad configurada para una zona y sexo (MACHO / HEMBRA). */
+export function resolveZoneDensity(
+  densities: ZoneCageDensity[],
+  zoneCode: string,
+  sex: SexPreference
+): number {
+  const normalizedZone = (zoneCode || 'METROPOLITANA').toUpperCase().trim();
+  const match =
+    densities.find((d) => d.zone_code.toUpperCase() === normalizedZone) ||
+    DEFAULT_ZONE_DENSITIES.find((d) => d.zone_code === normalizedZone);
+  if (!match) return DEFAULT_DENSITY;
+  return clampDensity(sex === 'HEMBRA' ? match.female_density : match.male_density);
+}
+
 export interface Client {
   id: string;
   business_name: string;
@@ -172,6 +201,10 @@ export interface SalesOrder {
   // Ciclo de Vida del Despacho (Tracking de 4 Fases)
   dispatch_phase?: DispatchPhase;
   dispatch_phase_updated_at?: string;
+  // Código Aris (generado por Gestor Comercial)
+  codigo_aris?: string;
+  codigo_aris_generated_at?: string;
+  codigo_aris_generated_by?: string;
   loading_slot_time?: string;
   // Historial de Auditoría y Trazabilidad
   audit_log?: AuditLogEntry[];
@@ -217,6 +250,20 @@ export interface TransportVehicle {
   status: 'DISPONIBLE' | 'ASIGNADO' | 'EN_MANTENIMIENTO';
 }
 
+export interface TransportVehicleCreatePayload {
+  plate: string;
+  model: string;
+  capacity_cages: number;
+  capacity_birds?: number;
+  driver_name: string;
+  driver_phone?: string;
+  default_crew?: string;
+  zone_coverage: string[];
+  status?: 'DISPONIBLE' | 'ASIGNADO' | 'EN_MANTENIMIENTO';
+}
+
+export type TransportVehicleUpdatePayload = Partial<TransportVehicleCreatePayload>;
+
 export interface AssignTransportPayload {
   vehicle_id: string;
   plate?: string;
@@ -234,11 +281,11 @@ export interface OrderCreatePayload {
   client_tax_id?: string;
   seller_full_name?: string;
   zone_code: string;
-  target_delivery_date: string;
+  target_delivery_date?: string;
   requested_quantity: number;
   density_birds_per_cage?: number;
-  min_weight_kg: number;
-  max_weight_kg: number;
+  min_weight_kg?: number;
+  max_weight_kg?: number;
   sex_preference?: SexPreference;
   suggested_farm_code?: string;
   suggested_barn_code?: string;

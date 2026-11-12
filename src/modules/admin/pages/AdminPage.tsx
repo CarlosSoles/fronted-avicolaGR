@@ -6,6 +6,13 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Modal } from '@/components/ui/Modal';
 import {
+  ZoneCageDensity,
+  DEFAULT_ZONE_DENSITIES,
+  MIN_DENSITY,
+  MAX_DENSITY,
+  clampDensity,
+} from '@/types/comercial';
+import {
   Users,
   UserPlus,
   Search,
@@ -30,6 +37,7 @@ import {
   Truck,
   MapPin,
   ExternalLink,
+  Save,
 } from 'lucide-react';
 import { AdminGpsSimulationPanel } from '../components/AdminGpsSimulationPanel';
 
@@ -81,6 +89,12 @@ const ROLE_DEFINITIONS: Record<
     description: 'Captura y registro de pedidos de clientes en rutas comerciales.',
     color: 'emerald',
     badgeClass: 'bg-emerald-50 text-emerald-700 border-emerald-200 dark:bg-emerald-950/40 dark:text-emerald-400 dark:border-emerald-900/60',
+  },
+  controlador_flota: {
+    label: 'Controlador de Flota',
+    description: 'Asignación de camiones a pedidos programados y administración de la flota de distribución.',
+    color: 'cyan',
+    badgeClass: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/40 dark:text-cyan-400 dark:border-cyan-900/60',
   },
 };
 
@@ -360,9 +374,77 @@ export const AdminPage: React.FC = () => {
     }
   };
 
+  // Densidades por zona y sexo
+  const [zoneDensities, setZoneDensities] = useState<ZoneCageDensity[]>(DEFAULT_ZONE_DENSITIES);
+  const [loadingZoneDensities, setLoadingZoneDensities] = useState(false);
+  const [savingZoneDensities, setSavingZoneDensities] = useState(false);
+
+  const fetchZoneDensities = async () => {
+    setLoadingZoneDensities(true);
+    try {
+      const data = await apiClient<ZoneCageDensity[]>('/admin/zone-densities');
+      if (Array.isArray(data) && data.length > 0) {
+        setZoneDensities(data);
+        localStorage.setItem('avicola_zone_densities', JSON.stringify(data));
+      }
+    } catch {
+      const stored = localStorage.getItem('avicola_zone_densities');
+      if (stored) {
+        try {
+          setZoneDensities(JSON.parse(stored));
+        } catch {}
+      }
+    } finally {
+      setLoadingZoneDensities(false);
+    }
+  };
+
+  const handleDensityValueChange = (
+    zoneCode: string,
+    field: 'male_density' | 'female_density',
+    rawValue: string
+  ) => {
+    const parsed = parseInt(rawValue, 10);
+    setZoneDensities((prev) =>
+      prev.map((item) =>
+        item.zone_code === zoneCode
+          ? {
+              ...item,
+              [field]: Number.isFinite(parsed) ? parsed : item[field],
+            }
+          : item
+      )
+    );
+  };
+
+  const handleSaveZoneDensities = async () => {
+    setSavingZoneDensities(true);
+    try {
+      const payload = {
+        densities: zoneDensities.map((z) => ({
+          zone_code: z.zone_code,
+          male_density: clampDensity(z.male_density),
+          female_density: clampDensity(z.female_density),
+        })),
+      };
+      const saved = await apiClient<ZoneCageDensity[]>('/admin/zone-densities', {
+        method: 'PUT',
+        body: JSON.stringify(payload),
+      });
+      setZoneDensities(saved);
+      localStorage.setItem('avicola_zone_densities', JSON.stringify(saved));
+      showNotification('✔ Densidades por zona y sexo guardadas en la base de datos.');
+    } catch (err: any) {
+      showNotification(`❌ No se pudieron guardar las densidades: ${err?.message || 'Error de conexión'}`);
+    } finally {
+      setSavingZoneDensities(false);
+    }
+  };
+
   useEffect(() => {
     fetchUsers();
     fetchFarms();
+    fetchZoneDensities();
   }, []);
 
   // ----------------------------------------------------------------------------
@@ -792,6 +874,7 @@ export const AdminPage: React.FC = () => {
                 <option value="gestor_comercial">Gestor Comercial</option>
                 <option value="gerente_comercial">Gerente Comercial</option>
                 <option value="vendedor">Vendedor Comercial</option>
+                <option value="controlador_flota">Controlador de Flota</option>
               </select>
 
               {/* Filtro por Estado */}
@@ -1050,58 +1133,136 @@ export const AdminPage: React.FC = () => {
       {/* TAB 3: PARÁMETROS TÉCNICOS & SEGURIDAD */}
       {/* ========================================================================= */}
       {activeTab === 'parametros' && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 shadow-xs">
-            <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-              <Sliders className="w-5 h-5 text-red-600" />
-              <span>Reglas de Negocio Pecuario</span>
+        <div className="space-y-4">
+          {/* Configuración de Densidad de Carga por Zona y Sexo */}
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-4 shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <div>
+                <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+                  <Truck className="w-5 h-5 text-red-600" />
+                  <span>Densidad de Carga por Zona y Sexo (Aves / Jaula)</span>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+                  Define la densidad por defecto (rango {MIN_DENSITY}–{MAX_DENSITY} aves/jaula) según zona y sexo. El módulo Comercial tomará automáticamente estos valores en solo lectura al generar un pedido.
+                </p>
+              </div>
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleSaveZoneDensities}
+                isLoading={savingZoneDensities}
+                disabled={loadingZoneDensities}
+                className="bg-red-600 hover:bg-red-700 text-white font-bold flex items-center gap-1.5 shrink-0"
+              >
+                <Save className="w-4 h-4" />
+                <span>Guardar Densidades</span>
+              </Button>
             </div>
-            <div className="space-y-2 text-xs divide-y divide-slate-100 dark:divide-slate-800">
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Edad objetivo para saca:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">38 a 45 días</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Prioridad para cierre de galpón:</span>
-                <span className="font-bold text-red-600 dark:text-red-400">&gt; 45 días (Prioridad 1)</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Tolerancia de peso objetivo:</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100">± 0.150 kg</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Colorimetría por sexo:</span>
-                <span className="font-semibold text-slate-800 dark:text-slate-200">
-                  Macho (Azul Pastel) / Hembra (Rojo Pastel)
-                </span>
-              </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 dark:bg-slate-800/70 text-[11px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
+                    <th className="py-2.5 px-3">Zona Comercial</th>
+                    <th className="py-2.5 px-3 text-center">Código</th>
+                    <th className="py-2.5 px-3 text-center">Machos (aves/jaula)</th>
+                    <th className="py-2.5 px-3 text-center">Hembras (aves/jaula)</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                  {zoneDensities.map((zone) => (
+                    <tr key={zone.zone_code} className="hover:bg-slate-50/70 dark:hover:bg-slate-800/40">
+                      <td className="py-3 px-3 font-bold text-slate-900 dark:text-slate-100">
+                        <span className="inline-flex items-center gap-1.5">
+                          <MapPin className="w-3.5 h-3.5 text-red-600" />
+                          {zone.zone_name}
+                        </span>
+                      </td>
+                      <td className="py-3 px-3 text-center font-mono font-bold text-slate-500 dark:text-slate-400">
+                        {zone.zone_code}
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <Input
+                          type="number"
+                          min={MIN_DENSITY}
+                          max={MAX_DENSITY}
+                          step={1}
+                          value={zone.male_density}
+                          onChange={(e) => handleDensityValueChange(zone.zone_code, 'male_density', e.target.value)}
+                          className="w-24 mx-auto text-center font-mono font-black text-blue-700 dark:text-blue-300"
+                        />
+                      </td>
+                      <td className="py-3 px-3 text-center">
+                        <Input
+                          type="number"
+                          min={MIN_DENSITY}
+                          max={MAX_DENSITY}
+                          step={1}
+                          value={zone.female_density}
+                          onChange={(e) => handleDensityValueChange(zone.zone_code, 'female_density', e.target.value)}
+                          className="w-24 mx-auto text-center font-mono font-black text-rose-700 dark:text-rose-300"
+                        />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
           </div>
 
-          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 shadow-xs">
-            <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
-              <Lock className="w-5 h-5 text-red-600" />
-              <span>Seguridad &amp; Conexión a Base de Datos</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 shadow-xs">
+              <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+                <Sliders className="w-5 h-5 text-red-600" />
+                <span>Reglas de Negocio Pecuario</span>
+              </div>
+              <div className="space-y-2 text-xs divide-y divide-slate-100 dark:divide-slate-800">
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Edad objetivo para saca:</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">38 a 45 días</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Prioridad para cierre de galpón:</span>
+                  <span className="font-bold text-red-600 dark:text-red-400">&gt; 45 días (Prioridad 1)</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Tolerancia de peso objetivo:</span>
+                  <span className="font-bold text-slate-900 dark:text-slate-100">± 0.150 kg</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Colorimetría por sexo:</span>
+                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                    Macho (Azul Pastel) / Hembra (Rojo Pastel)
+                  </span>
+                </div>
+              </div>
             </div>
-            <div className="space-y-2 text-xs divide-y divide-slate-100 dark:divide-slate-800">
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Base de Datos:</span>
-                <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  PostgreSQL Supabase (Conectado)
-                </span>
+
+            <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 space-y-3 shadow-xs">
+              <div className="flex items-center gap-2 text-slate-900 dark:text-slate-100 font-bold text-sm">
+                <Lock className="w-5 h-5 text-red-600" />
+                <span>Seguridad &amp; Conexión a Base de Datos</span>
               </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Cifrado de Contraseñas:</span>
-                <span className="font-mono text-slate-900 dark:text-slate-100">PBKDF2-HMAC-SHA256</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Token de Sesión:</span>
-                <span className="font-mono text-slate-900 dark:text-slate-100">JWT HS256 / Bearer</span>
-              </div>
-              <div className="flex justify-between py-2">
-                <span className="text-slate-500 dark:text-slate-400">Administrador Maestro:</span>
-                <span className="font-mono font-bold text-red-600 dark:text-red-400">admin (admin 123)</span>
+              <div className="space-y-2 text-xs divide-y divide-slate-100 dark:divide-slate-800">
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Base de Datos:</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    PostgreSQL Supabase (Conectado)
+                  </span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Cifrado de Contraseñas:</span>
+                  <span className="font-mono text-slate-900 dark:text-slate-100">PBKDF2-HMAC-SHA256</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Token de Sesión:</span>
+                  <span className="font-mono text-slate-900 dark:text-slate-100">JWT HS256 / Bearer</span>
+                </div>
+                <div className="flex justify-between py-2">
+                  <span className="text-slate-500 dark:text-slate-400">Administrador Maestro:</span>
+                  <span className="font-mono font-bold text-red-600 dark:text-red-400">admin (admin 123)</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1217,6 +1378,7 @@ export const AdminPage: React.FC = () => {
               <option value="gestor_comercial">Gestor Comercial (Gestión Comercial)</option>
               <option value="gerente_comercial">Gerente Comercial (Aprobaciones y Reportes)</option>
               <option value="vendedor">Vendedor Comercial (Área Comercial / Pedidos)</option>
+              <option value="controlador_flota">Controlador de Flota (Control de Flota &amp; Transporte)</option>
               <option value="admin_sistema">Administrador TI (Acceso Completo &amp; Admin)</option>
             </select>
             <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
@@ -1314,6 +1476,7 @@ export const AdminPage: React.FC = () => {
                   <option value="gestor_comercial">Gestor Comercial</option>
                   <option value="gerente_comercial">Gerente Comercial</option>
                   <option value="vendedor">Vendedor Comercial</option>
+                  <option value="controlador_flota">Controlador de Flota</option>
                   <option value="admin_sistema">Administrador TI</option>
                 </select>
               </div>

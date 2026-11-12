@@ -21,6 +21,7 @@ import {
   Moon,
   Bell,
   User,
+  Truck,
 } from 'lucide-react';
 
 export const DashboardLayout: React.FC = () => {
@@ -46,6 +47,7 @@ export const DashboardLayout: React.FC = () => {
     gestor_comercial: { label: 'Gestor Comercial', color: 'blue' },
     gerente_comercial: { label: 'Gerente Comercial', color: 'purple' },
     vendedor: { label: 'Vendedor', color: 'slate' },
+    controlador_flota: { label: 'Controlador de Flota', color: 'emerald' },
     admin_sistema: { label: 'Administrador Maestro', color: 'slate' },
   };
 
@@ -78,6 +80,13 @@ export const DashboardLayout: React.FC = () => {
       sublabel: 'Asignación & Reservas',
       icon: Sliders,
       allowedRoles: ['gestor_comercial', 'gerente_comercial', 'admin_sistema'],
+    },
+    {
+      to: '/control-flota',
+      label: 'Control de Flota',
+      sublabel: 'Transporte & Distribución',
+      icon: Truck,
+      allowedRoles: ['controlador_flota', 'admin_sistema'],
     },
   ];
 

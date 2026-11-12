@@ -249,18 +249,33 @@ export const GalponesView: React.FC<GalponesViewProps> = ({ data, isLoading }) =
 
               <DataCard
                 icon={<Scale className="w-3.5 h-3.5" />}
-                label="Peso promedio"
-                value={barn.average_weight_kg != null ? `${barn.average_weight_kg.toFixed(2)} kg` : 'Sin pesaje'}
+                label="Promedio pesos (g)"
+                value={
+                  barn.average_weight_g != null && barn.average_weight_g > 0
+                    ? `${barn.average_weight_g.toLocaleString('en-US', {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 2,
+                      })} g`
+                    : barn.average_weight_kg != null && barn.average_weight_kg > 0
+                    ? `${(barn.average_weight_kg * 1000).toLocaleString('en-US', {
+                        minimumFractionDigits: 0,
+                        maximumFractionDigits: 2,
+                      })} g`
+                    : 'Sin pesaje'
+                }
+                mono
               />
               <DataCard
                 icon={<Scale className="w-3.5 h-3.5" />}
-                label="Rango de peso"
+                label="Peso estándar (g)"
                 value={
-                  barn.weight_range_label ||
-                  (barn.min_weight_kg != null && barn.max_weight_kg != null
-                    ? `${barn.min_weight_kg.toFixed(2)} - ${barn.max_weight_kg.toFixed(2)} kg`
-                    : 'Sin pesaje')
+                  barn.standard_weight_g != null && barn.standard_weight_g > 0
+                    ? `${Math.round(barn.standard_weight_g).toLocaleString('en-US', {
+                        maximumFractionDigits: 0,
+                      })} g`
+                    : '--'
                 }
+                mono
               />
               <DataCard
                 icon={<CheckCircle2 className="w-3.5 h-3.5" />}

@@ -67,6 +67,16 @@ const AREA_META: Record<
       { key: 'ajuste', label: 'Ajustes de Pedido' },
     ],
   },
+  control_flota: {
+    title: 'Centro de Alertas • Control de Flota',
+    subtitle: 'Pedidos aprobados por el Gestor esperando asignación de camión, cambios de ruta y novedades de distribución.',
+    badgeText: 'Control de Flota',
+    badgeColor: 'bg-cyan-50 text-cyan-700 border-cyan-200 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800',
+    filters: [
+      { key: 'transporte', label: 'Pendientes de Camión' },
+      { key: 'entrega', label: 'Despachos en Curso' },
+    ],
+  },
   admin: {
     title: 'Centro de Notificaciones & Auditoría TI',
     subtitle: 'Auditoría de accesos, creación de cuentas operativas, telemetría telemática de flota y sincronizaciones.',

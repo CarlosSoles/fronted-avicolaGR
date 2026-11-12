@@ -12,22 +12,17 @@ import {
   Printer,
   RefreshCw,
   FileSpreadsheet,
-  UserCheck,
   MapPin,
   ShieldAlert,
   Sparkles,
   Bird,
-  ChevronRight,
   Info,
   X,
   ArrowRight,
   Eye,
-  Undo2,
-  Phone,
   Layers,
   MessageSquare,
   Scissors,
-  Link2,
   Building2,
   User,
   Copy,
@@ -50,8 +45,6 @@ import {
   SalesOrder,
   OrderStatus,
   SexPreference,
-  TransportVehicle,
-  AssignTransportPayload,
   OrderActionPayload,
   DispatchPhase,
   computeCages,
@@ -65,10 +58,9 @@ import { TablaGeneralSaldoItem } from '@/types/pecuaria';
 import { FlotaGpsMap } from '../components/gps/FlotaGpsMap';
 import { gpsSimulationStore } from '../components/gps/gpsSimulationStore';
 import { DispatchLifecycleStepper } from '../components/dispatch/DispatchLifecycleStepper';
-import { DispatchPhasePipeline } from '../components/dispatch/DispatchPhasePipeline';
 import { WhatsAppManifestModal } from '../components/dispatch/WhatsAppManifestModal';
-import { ConsolidationCubicajeBar } from '../components/dispatch/ConsolidationCubicajeBar';
 import { AuditTimeline } from '../components/audit/AuditTimeline';
+import { SaldosGalponPanel } from '../components/SaldosGalponPanel';
 import { RoxiCopilotCard } from '@/components/roxi/RoxiCopilotCard';
 import { RoxiAvatar } from '@/components/roxi/RoxiAvatar';
 import { RoxiGestorDashboard } from '@/components/roxi/RoxiGestorDashboard';
@@ -145,15 +137,14 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   // ESTADOS PRINCIPALES
   // =========================================================================
   const [orders, setOrders] = useState<SalesOrder[]>([]);
-  const [vehicles, setVehicles] = useState<TransportVehicle[]>([]);
   const [pecuariaItems, setPecuariaItems] = useState<TablaGeneralSaldoItem[]>([]);
+  const [pecuariaLastUpdated, setPecuariaLastUpdated] = useState<Date | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Pestaña activa
-  const [activeTab, setActiveTab] = useState<'pedidos' | 'clientes' | 'despacho' | 'flota' | 'pecuaria' | 'mapa_gps' | 'roxi'>('pedidos');
-  const [selectedGpsTruckId, setSelectedGpsTruckId] = useState<string>('VH-001');
+  // Pestaña activa: la primera vista del Gestor Comercial es Saldos por Galpón para planificar en base a disponibilidad
+  const [activeTab, setActiveTab] = useState<'pecuaria' | 'pedidos' | 'clientes' | 'mapa_gps' | 'roxi'>('pecuaria');
   const [roxiSelectedOrderId, setRoxiSelectedOrderId] = useState<string>('');
 
   // Filtros
@@ -161,13 +152,11 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   const [dateFilter, setDateFilter] = useState<DateFilterValue>(DEFAULT_DATE_FILTER);
   const dateRange = useMemo(() => resolveRange(dateFilter), [dateFilter]);
   const [selectedZone, setSelectedZone] = useState<string>('ALL');
-  const [selectedPhaseFilter, setSelectedPhaseFilter] = useState<string>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
   // Modales
   const [approvingOrder, setApprovingOrder] = useState<SalesOrder | null>(null);
   const [observingOrder, setObservingOrder] = useState<SalesOrder | null>(null);
-  const [transportingOrder, setTransportingOrder] = useState<SalesOrder | null>(null);
   const [detailOrder, setDetailOrder] = useState<SalesOrder | null>(null);
   const [detailTab, setDetailTab] = useState<DetailTab>('resumen');
   const [routeOrder, setRouteOrder] = useState<SalesOrder | null>(null);
@@ -197,16 +186,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   const [obsReason, setObsReason] = useState<string>('');
   const [isSubmittingObs, setIsSubmittingObs] = useState<boolean>(false);
 
-  // Estados de formulario de Asignación de Transporte y Slotting
-  const [transportVehicleId, setTransportVehicleId] = useState<string>('');
-  const [transportShift, setTransportShift] = useState<string>('MADRUGADA');
-  const [transportLoadingSlot, setTransportLoadingSlot] = useState<string>('03:00 - 05:00 hrs');
-  const [transportDriverName, setTransportDriverName] = useState<string>('');
-  const [transportDriverPhone, setTransportDriverPhone] = useState<string>('');
-  const [transportCrewName, setTransportCrewName] = useState<string>('');
-  const [transportNotes, setTransportNotes] = useState<string>('');
-  const [isSubmittingTransport, setIsSubmittingTransport] = useState<boolean>(false);
-
   // =========================================================================
   // TOAST TEMPORIZADO
   // =========================================================================
@@ -220,8 +199,8 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   // =========================================================================
   // CARGA DE DATOS (PEDIDOS, FLOTA DE TRANSPORTE Y DISPONIBILIDAD PECUARIA)
   // =========================================================================
-  const fetchData = async () => {
-    setRefreshing(true);
+  const fetchData = async (silent = false) => {
+    if (!silent) setRefreshing(true);
     try {
       // 1. Cargar Pedidos Comerciales
       try {
@@ -231,101 +210,18 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           localStorage.setItem('avicola_comercial_orders', JSON.stringify(ordersData));
         }
       } catch (err) {
-        console.warn('Fallback a pedidos locales:', err);
-        const stored = localStorage.getItem('avicola_comercial_orders');
-        if (stored) {
-          try {
-            setOrders(JSON.parse(stored));
-          } catch {}
+        if (!silent) {
+          console.warn('Fallback a pedidos locales:', err);
+          const stored = localStorage.getItem('avicola_comercial_orders');
+          if (stored) {
+            try {
+              setOrders(JSON.parse(stored));
+            } catch {}
+          }
         }
       }
 
-      // 2. Cargar Flota de Transporte de Distribución
-      try {
-        const vehiclesData = await apiClient<TransportVehicle[]>('/comercial/transport/vehicles');
-        if (Array.isArray(vehiclesData) && vehiclesData.length > 0) {
-          setVehicles(vehiclesData);
-        }
-      } catch (err) {
-        console.warn('Fallback a flota predeterminada:', err);
-        // Fallback a flota estándar de distribución
-        setVehicles([
-          {
-            id: 'VH-001',
-            plate: 'T8C-940',
-            model: 'Camión Baranda 3 Ejes',
-            capacity_cages: 450,
-            capacity_birds: 3600,
-            driver_name: 'Carlos Méndez Rojas',
-            driver_phone: '+51 984 123 456',
-            default_crew: 'Cuadrilla Norte 1',
-            zone_coverage: ['NORTE', 'CENTRO', 'METROPOLITANA'],
-            status: 'DISPONIBLE',
-          },
-          {
-            id: 'VH-002',
-            plate: 'V6B-821',
-            model: 'Camión Plataforma 2 Ejes',
-            capacity_cages: 350,
-            capacity_birds: 2800,
-            driver_name: 'José Luis Quispe',
-            driver_phone: '+51 992 345 678',
-            default_crew: 'Cuadrilla Centro 2',
-            zone_coverage: ['CENTRO', 'METROPOLITANA'],
-            status: 'DISPONIBLE',
-          },
-          {
-            id: 'VH-003',
-            plate: 'W5A-712',
-            model: 'Semirremolque Jaulero Pesado',
-            capacity_cages: 650,
-            capacity_birds: 5200,
-            driver_name: 'Manuel Rodríguez Ramos',
-            driver_phone: '+51 977 456 789',
-            default_crew: 'Cuadrilla Pesada Alpha',
-            zone_coverage: ['NORTE', 'SUR', 'CENTRO', 'METROPOLITANA'],
-            status: 'DISPONIBLE',
-          },
-          {
-            id: 'VH-004',
-            plate: 'F4K-915',
-            model: 'Camión Baranda 3 Ejes',
-            capacity_cages: 450,
-            capacity_birds: 3600,
-            driver_name: 'Roberto Sánchez Díaz',
-            driver_phone: '+51 981 567 890',
-            default_crew: 'Cuadrilla Sur 1',
-            zone_coverage: ['SUR', 'METROPOLITANA'],
-            status: 'DISPONIBLE',
-          },
-          {
-            id: 'VH-005',
-            plate: 'B7Z-330',
-            model: 'Camión Mediano 2 Ejes',
-            capacity_cages: 300,
-            capacity_birds: 2400,
-            driver_name: 'David Paredes Vega',
-            driver_phone: '+51 965 678 901',
-            default_crew: 'Cuadrilla Express',
-            zone_coverage: ['NORTE', 'CENTRO'],
-            status: 'DISPONIBLE',
-          },
-          {
-            id: 'VH-006',
-            plate: 'D9X-504',
-            model: 'Semirremolque Jaulero 4 Ejes',
-            capacity_cages: 600,
-            capacity_birds: 4800,
-            driver_name: 'Hugo Alarcón Castro',
-            driver_phone: '+51 953 789 012',
-            default_crew: 'Cuadrilla Pesada Beta',
-            zone_coverage: ['NORTE', 'SUR', 'CENTRO', 'METROPOLITANA'],
-            status: 'DISPONIBLE',
-          },
-        ]);
-      }
-
-      // 3. Cargar Balance de Saldo de Pecuaria
+      // 2. Cargar Balance de Saldo de Pecuaria
       try {
         const pecuariaData = await apiClient<any>('/pecuaria/tabla-general-saldo');
         const rawList = pecuariaData?.data || pecuariaData?.items;
@@ -335,6 +231,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           // Sin lotes en la base: no se inventan galpones
           setPecuariaItems([]);
         }
+        setPecuariaLastUpdated(new Date());
       } catch (err) {
         // Sin conexión: se mantiene lo último cargado, sin generar datos sintéticos
         console.warn('No se pudo cargar la disponibilidad de Pecuaria:', err);
@@ -349,11 +246,26 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
     fetchData();
   }, []);
 
+  // Sincronía automática con Control de Flota: sondeo silencioso y refresco al recuperar el foco
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!approvingOrder && !observingOrder) {
+        fetchData(true);
+      }
+    }, 12000);
+    const onFocus = () => fetchData(true);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [approvingOrder, observingOrder]);
+
   useEffect(() => {
     gpsSimulationStore.syncOrders(orders);
   }, [orders]);
 
-  // Sincronización telemática automática en tiempo real: Ciclo de vida del despacho con la marcha GPS
+  // Sincronización telemática en modo lectura con la marcha GPS controlada por Control de Flota
   useEffect(() => {
     const unsub = gpsSimulationStore.subscribe(() => {
       const trucks = gpsSimulationStore.getTrucks();
@@ -371,26 +283,17 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
 
           if (!matchedTruck) return order;
 
-          // Determinar la fase en base al avance telemático real de la unidad en la carretera
-          let targetPhase: DispatchPhase = 'TRANSPORTE_ASIGNADO';
+          let targetPhase: DispatchPhase = order.dispatch_phase || 'TRANSPORTE_ASIGNADO';
           if (matchedTruck.progressPercent >= 100) {
             targetPhase = 'ENTREGADO_CONFORME';
           } else if (matchedTruck.progressPercent > 0) {
             targetPhase = 'EN_TRANSITO';
-          } else {
+          } else if (matchedTruck.isPlaying) {
             targetPhase = 'EN_GRANJA_CARGANDO';
           }
 
           if (order.dispatch_phase !== targetPhase) {
             hasChanges = true;
-            // Sincronizar en segundo plano con el backend
-            apiClient<SalesOrder>(`/comercial/orders/${order.id}/dispatch-phase`, {
-              method: 'PATCH',
-              body: JSON.stringify({ dispatch_phase: targetPhase }),
-            }).catch(() => {
-              // Silencioso en modo offline o desarrollo
-            });
-
             const newStatus: OrderStatus =
               targetPhase === 'ENTREGADO_CONFORME'
                 ? 'DESPACHADO'
@@ -413,7 +316,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
         return hasChanges ? updated : prevOrders;
       });
 
-      // Sincronizar también el modal de detalle si se encuentra abierto
       setDetailOrder((prev) => {
         if (!prev || !prev.transport_assigned) return prev;
         const matched = trucks.find(
@@ -423,12 +325,12 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
         );
         if (!matched) return prev;
 
-        let targetPhase: DispatchPhase = 'TRANSPORTE_ASIGNADO';
+        let targetPhase: DispatchPhase = prev.dispatch_phase || 'TRANSPORTE_ASIGNADO';
         if (matched.progressPercent >= 100) {
           targetPhase = 'ENTREGADO_CONFORME';
         } else if (matched.progressPercent > 0) {
           targetPhase = 'EN_TRANSITO';
-        } else {
+        } else if (matched.isPlaying) {
           targetPhase = 'EN_GRANJA_CARGANDO';
         }
 
@@ -526,19 +428,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       return true;
     });
   }, [orders, selectedStatus, selectedZone, searchQuery, dateFilter.criterion, dateRange]);
-
-  // Pedidos aprobados o despachados que requieren o ya tienen transporte (para la pestaña Despacho)
-  const dispatchOrders = useMemo(() => {
-    return orders
-      .filter((o) => o.status === 'APROBADO_RESERVADO' || o.status === 'DESPACHADO')
-      .filter((o) => matchesRange(orderDateKey(o, dateFilter.criterion), dateRange))
-      .filter((o) => (selectedZone === 'ALL' ? true : o.zone_code === selectedZone))
-      .filter((o) => {
-        if (selectedPhaseFilter === 'ALL') return true;
-        const currentPhase = o.dispatch_phase || (o.transport_assigned ? 'TRANSPORTE_ASIGNADO' : 'PENDIENTE');
-        return currentPhase === selectedPhaseFilter;
-      });
-  }, [orders, dateFilter.criterion, dateRange, selectedZone, selectedPhaseFilter]);
 
   // =========================================================================
   // GESTIÓN DE ACCIONES: APROBACIÓN FORMAL Y RESERVA DE GALPÓN
@@ -763,6 +652,29 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
   };
 
   // =========================================================================
+  // GENERAR CÓDIGO ARIS (CONFIRMACIÓN DEL GESTOR COMERCIAL)
+  // =========================================================================
+  const handleGenerarCodigoAris = async (order: SalesOrder) => {
+    if (!window.confirm(`¿Generar código Aris para el pedido ${order.order_number}?\n\nEsta acción confirma la planificación completa del pedido y lo deja listo para despacho.`)) {
+      return;
+    }
+
+    setIsSubmittingApproval(true);
+    try {
+      const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/generar-codigo-aris`, {
+        method: 'POST',
+      });
+
+      setOrders((prev) => prev.map((o) => (o.id === updated.id ? updated : o)));
+      showToast(`✅ Código Aris generado: ${updated.codigo_aris} para el pedido ${order.order_number}.`);
+    } catch (err: any) {
+      showToast(`❌ Error al generar código Aris: ${err.message || 'Error de conexión'}`);
+    } finally {
+      setIsSubmittingApproval(false);
+    }
+  };
+
+  // =========================================================================
   // GESTIÓN DE ACCIONES: OBSERVACIÓN DE PEDIDO
   // =========================================================================
   const handleOpenObservationModal = (order: SalesOrder) => {
@@ -807,196 +719,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       showToast(`❌ Error al registrar observación: ${err.message || 'Error desconocido'}`);
     } finally {
       setIsSubmittingObs(false);
-    }
-  };
-
-  // =========================================================================
-  // GESTIÓN DE ACCIONES: DESIGNACIÓN DE TRANSPORTE (ÁREA DE DISTRIBUCIÓN)
-  // =========================================================================
-  const handleOpenTransportModal = (order: SalesOrder) => {
-    setTransportingOrder(order);
-    // Seleccionar vehículo por defecto (o el ya asignado)
-    const existingVehicle = vehicles.find((v) => v.id === order.transport_truck_id || v.plate === order.transport_plate);
-    const defaultVehicle = existingVehicle || vehicles[0];
-
-    if (defaultVehicle) {
-      setTransportVehicleId(defaultVehicle.id);
-      setTransportDriverName(order.transport_driver_name || defaultVehicle.driver_name);
-      setTransportDriverPhone(order.transport_driver_phone || defaultVehicle.driver_phone || '');
-      setTransportCrewName(order.transport_crew || defaultVehicle.default_crew || 'Cuadrilla Oficial');
-    }
-    setTransportShift(order.transport_shift || 'MADRUGADA');
-    setTransportLoadingSlot(order.loading_slot_time || '03:00 - 05:00 hrs');
-    setTransportNotes(order.transport_notes || '');
-  };
-
-  const handleVehicleSelectChange = (vehicleId: string) => {
-    setTransportVehicleId(vehicleId);
-    const veh = vehicles.find((v) => v.id === vehicleId);
-    if (veh) {
-      setTransportDriverName(veh.driver_name);
-      setTransportDriverPhone(veh.driver_phone || '');
-      setTransportCrewName(veh.default_crew || 'Cuadrilla Oficial');
-    }
-  };
-
-  // Vehículo actualmente seleccionado en el modal
-  const selectedTransportVehicle = useMemo(() => {
-    return vehicles.find((v) => v.id === transportVehicleId);
-  }, [vehicles, transportVehicleId]);
-
-  // Inconsistencia Logística 1: Sobrecapacidad de Jaulas
-  const transportCagesNeeded = useMemo(() => {
-    if (!transportingOrder) return 0;
-    const birds = transportingOrder.allocated_quantity || transportingOrder.requested_quantity || 0;
-    return transportingOrder.estimated_cages || computeCages(birds, transportingOrder.density_birds_per_cage);
-  }, [transportingOrder]);
-
-  const isVehicleOvercapacity = useMemo(() => {
-    if (!selectedTransportVehicle) return false;
-    return transportCagesNeeded > selectedTransportVehicle.capacity_cages;
-  }, [selectedTransportVehicle, transportCagesNeeded]);
-
-  // Inconsistencia Logística 2: Zona fuera de cobertura habitual
-  const isZoneMismatch = useMemo(() => {
-    if (!selectedTransportVehicle || !transportingOrder) return false;
-    if (selectedTransportVehicle.zone_coverage.includes('TODAS')) return false;
-    return !selectedTransportVehicle.zone_coverage.includes(transportingOrder.zone_code);
-  }, [selectedTransportVehicle, transportingOrder]);
-
-  const handleConfirmTransport = async () => {
-    if (!transportingOrder || !selectedTransportVehicle) return;
-
-    setIsSubmittingTransport(true);
-    try {
-      const payload: AssignTransportPayload = {
-        vehicle_id: selectedTransportVehicle.id,
-        plate: selectedTransportVehicle.plate,
-        driver_name: transportDriverName.trim() || selectedTransportVehicle.driver_name,
-        driver_phone: transportDriverPhone.trim() || selectedTransportVehicle.driver_phone,
-        crew_name: transportCrewName.trim() || selectedTransportVehicle.default_crew,
-        shift: transportShift,
-        loading_slot_time: transportLoadingSlot,
-        transport_notes: transportNotes.trim(),
-      };
-
-      try {
-        const updated = await apiClient<SalesOrder>(`/comercial/orders/${transportingOrder.id}/assign-transport`, {
-          method: 'POST',
-          body: JSON.stringify(payload),
-        });
-        setOrders((prev) => prev.map((o) => (o.id === transportingOrder.id ? updated : o)));
-        showToast(`🚚 Transporte asignado: Camión ${payload.plate} • Chofer: ${payload.driver_name} (${transportShift}).`);
-      } catch (err) {
-        // Fallback local
-        const updatedLocal: SalesOrder = {
-          ...transportingOrder,
-          transport_assigned: true,
-          transport_truck_id: selectedTransportVehicle.id,
-          transport_plate: payload.plate,
-          transport_model: selectedTransportVehicle.model,
-          transport_driver_name: payload.driver_name,
-          transport_driver_phone: payload.driver_phone,
-          transport_crew: payload.crew_name,
-          transport_shift: payload.shift,
-          loading_slot_time: payload.loading_slot_time,
-          transport_capacity_cages: selectedTransportVehicle.capacity_cages,
-          transport_notes: payload.transport_notes,
-          transport_assigned_at: new Date().toISOString(),
-          transport_assigned_by: user?.username || 'gestor_comercial',
-          dispatch_phase: 'TRANSPORTE_ASIGNADO',
-          dispatch_phase_updated_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-        };
-        setOrders((prev) => prev.map((o) => (o.id === transportingOrder.id ? updatedLocal : o)));
-        showToast(`🚚 Transporte asignado localmente al pedido ${transportingOrder.order_number}.`);
-      }
-
-      setTransportingOrder(null);
-    } catch (err: any) {
-      showToast(`❌ Error al designar transporte: ${err.message || 'Error desconocido'}`);
-    } finally {
-      setIsSubmittingTransport(false);
-    }
-  };
-
-  const handleUnassignTransport = async (order: SalesOrder) => {
-    if (!window.confirm(`¿Está seguro de liberar la unidad de transporte del pedido ${order.order_number}?`)) {
-      return;
-    }
-    try {
-      try {
-        const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/unassign-transport`, {
-          method: 'POST',
-        });
-        setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
-      } catch {
-        const updatedLocal: SalesOrder = {
-          ...order,
-          transport_assigned: false,
-          transport_truck_id: undefined,
-          transport_plate: undefined,
-          transport_model: undefined,
-          transport_driver_name: undefined,
-          transport_driver_phone: undefined,
-          transport_crew: undefined,
-          transport_shift: undefined,
-          transport_capacity_cages: undefined,
-          transport_notes: undefined,
-          dispatch_phase: undefined,
-          dispatch_phase_updated_at: undefined,
-          updated_at: new Date().toISOString(),
-        };
-        setOrders((prev) => prev.map((o) => (o.id === order.id ? updatedLocal : o)));
-      }
-      showToast(`ℹ️ Transporte liberado para el pedido ${order.order_number}.`);
-    } catch (err: any) {
-      showToast(`❌ Error al liberar transporte: ${err.message}`);
-    }
-  };
-
-  const handleUpdateDispatchPhase = async (order: SalesOrder, newPhase: DispatchPhase) => {
-    const nowStr = new Date().toISOString();
-    const phaseNames: Record<DispatchPhase, string> = {
-      TRANSPORTE_ASIGNADO: 'Transporte Asignado',
-      EN_GRANJA_CARGANDO: 'En Granja / Cargando Aves',
-      EN_TRANSITO: 'En Tránsito Carretera',
-      ENTREGADO_CONFORME: 'Entregado / Conforme en Destino',
-    };
-
-    // Actualización optimista inmediata
-    const updatedLocal: SalesOrder = {
-      ...order,
-      dispatch_phase: newPhase,
-      dispatch_phase_updated_at: nowStr,
-      status:
-        newPhase === 'ENTREGADO_CONFORME'
-          ? 'DESPACHADO'
-          : order.status === 'DESPACHADO'
-          ? 'APROBADO_RESERVADO'
-          : order.status,
-      updated_at: nowStr,
-    };
-    setOrders((prev) => prev.map((o) => (o.id === order.id ? updatedLocal : o)));
-    showToast(`🚚 ${order.order_number}: Fase actualizada a "${phaseNames[newPhase]}".`);
-
-    // Sincronizar con el simulador GPS si corresponde
-    if (newPhase === 'EN_TRANSITO') {
-      gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 35);
-    } else if (newPhase === 'ENTREGADO_CONFORME') {
-      gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 100);
-    } else if (newPhase === 'EN_GRANJA_CARGANDO' || newPhase === 'TRANSPORTE_ASIGNADO') {
-      gpsSimulationStore.seekTruckProgress(order.transport_truck_id || 'VH-001', 0);
-    }
-
-    try {
-      const updated = await apiClient<SalesOrder>(`/comercial/orders/${order.id}/dispatch-phase`, {
-        method: 'PATCH',
-        body: JSON.stringify({ dispatch_phase: newPhase }),
-      });
-      setOrders((prev) => prev.map((o) => (o.id === order.id ? updated : o)));
-    } catch (err) {
-      console.warn('Fallback local al actualizar fase de despacho:', err);
     }
   };
 
@@ -1339,7 +1061,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
             Gestión Comercial &amp; Asignación de Saca
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 mt-1 max-w-3xl">
-            Recepción de pedidos generados por el área comercial, evaluación pecuaria de galpones, aprobación formal de saca y designación de unidades de transporte de distribución.
+            Recepción de pedidos generados por el área comercial, evaluación pecuaria de galpones, aprobación formal de saca y seguimiento sincronizado con Control de Flota.
           </p>
         </div>
 
@@ -1347,7 +1069,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           <Button
             size="sm"
             variant="outline"
-            onClick={fetchData}
+            onClick={() => fetchData(false)}
             disabled={refreshing}
             className="font-bold flex items-center gap-1.5 bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-200"
           >
@@ -1358,8 +1080,9 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       </div>
 
       {/* ========================================================================= */}
-      {/* 5 TARJETAS KPIS TÁCTICAS DEL GESTOR */}
+      {/* 5 TARJETAS KPIS TÁCTICAS DEL GESTOR (EN PEDIDOS Y DEMÁS VISTAS) */}
       {/* ========================================================================= */}
+      {activeTab !== 'pecuaria' && (
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3.5">
         {/* KPI 1: Pendientes de Aprobación */}
         <div
@@ -1433,10 +1156,10 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           </div>
         </div>
 
-        {/* KPI 4: Pendientes de Transporte */}
+        {/* KPI 4: Esperando Control de Flota */}
         <div
           onClick={() => {
-            setActiveTab('despacho');
+            setActiveTab('pedidos');
             setSelectedStatus('SIN_TRANSPORTE');
           }}
           className={`p-3.5 rounded-2xl border cursor-pointer transition-all ${
@@ -1446,14 +1169,14 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           }`}
         >
           <div className="flex items-center justify-between text-slate-500 text-[10px] font-black uppercase tracking-wider">
-            <span>Pendientes Transporte</span>
+            <span>Sin Transporte (Flota)</span>
             <Truck className="w-4 h-4 text-blue-600" />
           </div>
           <div className="text-2xl font-black font-mono text-blue-700 dark:text-blue-400 mt-1">
             {metrics.pendingTransport}
           </div>
           <div className="text-[10px] text-blue-600 dark:text-blue-400 font-bold mt-0.5">
-            {metrics.assignedTransport} unidades ya asignadas
+            {metrics.assignedTransport} con unidad asignada
           </div>
         </div>
 
@@ -1471,11 +1194,24 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           </div>
         </div>
       </div>
+      )}
 
       {/* ========================================================================= */}
       {/* TABS DE NAVEGACIÓN OPERATIVA */}
       {/* ========================================================================= */}
       <div className="flex items-center gap-1 border-b border-slate-200 dark:border-slate-800 text-xs font-bold overflow-x-auto">
+        <button
+          onClick={() => setActiveTab('pecuaria')}
+          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
+            activeTab === 'pecuaria'
+              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
+              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+          }`}
+        >
+          <Bird className="w-4 h-4 text-amber-600 shrink-0" />
+          <span>Saldos por Galpón</span>
+        </button>
+
         <button
           onClick={() => setActiveTab('pedidos')}
           className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
@@ -1498,42 +1234,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
         >
           <Building2 className="w-4 h-4 shrink-0" />
           <span>Clientes</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('despacho')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'despacho'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Truck className="w-4 h-4 shrink-0" />
-          <span>Asignación de Transporte</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('flota')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'flota'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Truck className="w-4 h-4 text-emerald-600 shrink-0" />
-          <span>Flota de Distribución</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('pecuaria')}
-          className={`pb-3 px-3.5 flex items-center gap-2 border-b-2 whitespace-nowrap transition-colors ${
-            activeTab === 'pecuaria'
-              ? 'border-red-600 text-red-600 dark:text-red-400 font-black'
-              : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
-          }`}
-        >
-          <Bird className="w-4 h-4 text-amber-600 shrink-0" />
-          <span>Oferta Pecuaria</span>
         </button>
 
         <button
@@ -1767,6 +1467,12 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                                 Aprobado
                               </span>
                             )}
+                            {order.status === 'DESPACHADO' && (
+                              <span className="font-bold text-sky-700 dark:text-sky-400 text-xs flex items-center justify-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-sky-500 inline-block"></span>
+                                Despachado
+                              </span>
+                            )}
                             {order.status === 'CON_OBSERVACION' && (
                               <span className="font-bold text-rose-700 dark:text-rose-400 text-xs flex items-center justify-center gap-1.5">
                                 <span className="w-2 h-2 rounded-full bg-rose-500 inline-block"></span>
@@ -1778,7 +1484,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                             )}
                           </td>
 
-                          {/* Transporte de Distribución */}
+                          {/* Transporte de Distribución (asignado desde Control de Flota) */}
                           <td className="py-3 px-3 whitespace-nowrap">
                             {order.transport_assigned ? (
                               <div>
@@ -1799,13 +1505,10 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                                 )}
                               </div>
                             ) : order.status === 'APROBADO_RESERVADO' ? (
-                              <button
-                                onClick={() => handleOpenTransportModal(order)}
-                                className="text-[11px] font-extrabold text-blue-600 hover:text-blue-700 hover:underline flex items-center gap-1"
-                              >
-                                <Truck className="w-3.5 h-3.5" />
-                                <span>+ Designar Transporte</span>
-                              </button>
+                              <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-amber-700 dark:text-amber-400">
+                                <Clock className="w-3.5 h-3.5 text-amber-500" />
+                                <span>Pendiente Control de Flota</span>
+                              </span>
                             ) : (
                               <span className="text-[10px] text-slate-400 italic">Requiere aprobación previa</span>
                             )}
@@ -1829,7 +1532,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                               </Button>
 
                               {/* Botón Aprobar */}
-                              {order.status !== 'APROBADO_RESERVADO' && order.status !== 'CANCELADO' && (
+                              {order.status !== 'APROBADO_RESERVADO' && order.status !== 'DESPACHADO' && order.status !== 'CANCELADO' && (
                                 <Button
                                   size="sm"
                                   onClick={() => handleOpenApprovalModal(order)}
@@ -1841,18 +1544,25 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                                 </Button>
                               )}
 
-                              {/* Botón Asignar / Cambiar Transporte */}
-                              {order.status === 'APROBADO_RESERVADO' && (
+                              {/* Botón Generar Código Aris (solo si está aprobado, con camión y sin Aris aún) */}
+                              {order.status === 'APROBADO_RESERVADO' && order.transport_assigned && !order.codigo_aris && (
                                 <Button
                                   size="sm"
-                                  variant="outline"
-                                  onClick={() => handleOpenTransportModal(order)}
-                                  className="h-8 px-2.5 text-xs font-bold text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-900 hover:bg-blue-50"
-                                  title={order.transport_assigned ? 'Modificar asignación de transporte' : 'Designar camión de distribución'}
+                                  onClick={() => handleGenerarCodigoAris(order)}
+                                  className="h-8 px-2.5 text-xs bg-violet-600 hover:bg-violet-700 text-white font-extrabold shadow-2xs"
+                                  title="Generar Código Aris para confirmar el pedido"
                                 >
-                                  <Truck className="w-3.5 h-3.5 mr-1 text-blue-600" />
-                                  {order.transport_assigned ? 'Reasignar' : 'Transporte'}
+                                  <Sparkles className="w-3.5 h-3.5 mr-1 text-yellow-300" />
+                                  Generar Aris
                                 </Button>
+                              )}
+
+                              {/* Mostrar código Aris si ya fue generado */}
+                              {order.codigo_aris && (
+                                <span className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-violet-50 dark:bg-violet-950/30 border border-violet-200 dark:border-violet-800 text-violet-700 dark:text-violet-400 text-[11px] font-extrabold font-mono">
+                                  <Sparkles className="w-3 h-3" />
+                                  {order.codigo_aris}
+                                </span>
                               )}
 
                               {/* Botón Observar */}
@@ -1888,417 +1598,26 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       )}
 
       {/* ========================================================================= */}
-      {/* PESTAÑA 2: ASIGNACIÓN DE TRANSPORTE Y DESPACHO DE DISTRIBUCIÓN */}
-      {/* ========================================================================= */}
-      {activeTab === 'despacho' && (
-        <div className="space-y-4">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 bg-blue-50/60 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-900/60 rounded-2xl">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
-                <Truck className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
-                  Despacho de Saca &amp; Flota de Distribución
-                </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Designación de camiones, conductores y cuadrillas para pedidos formalmente aprobados con reserva.
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <OrderDateFilter value={dateFilter} onChange={setDateFilter} />
-            </div>
-          </div>
-
-          {/* PIPELINE DEL CICLO DE VIDA DEL DESPACHO (TRACKING DE 4 FASES) */}
-          <DispatchPhasePipeline
-            orders={orders}
-            selectedPhaseFilter={selectedPhaseFilter}
-            onSelectPhaseFilter={setSelectedPhaseFilter}
-          />
-
-          {/* Tarjetas de Despacho y Asignación Rápida */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {dispatchOrders.length === 0 ? (
-              <div className="col-span-full py-12 text-center text-slate-400 italic bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800">
-                No hay pedidos aprobados para la fecha seleccionada.
-              </div>
-            ) : (
-              dispatchOrders.map((order) => {
-                const birds = order.allocated_quantity || order.requested_quantity || 0;
-                const cages = order.estimated_cages || computeCages(birds, order.density_birds_per_cage);
-                const avgW = (order.min_weight_kg + order.max_weight_kg) / 2.0;
-                const tons = order.estimated_total_kg
-                  ? Math.round(order.estimated_total_kg / 100) / 10
-                  : Math.round(((birds * avgW) / 1000) * 10) / 10;
-
-                return (
-                  <div
-                    key={order.id}
-                    className={`p-4 rounded-2xl border transition-all ${
-                      order.transport_assigned
-                        ? 'bg-white dark:bg-slate-900 border-emerald-300 dark:border-emerald-800 shadow-xs'
-                        : 'bg-white dark:bg-slate-900 border-amber-300 dark:border-amber-700/80 ring-1 ring-amber-400/20'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-100 dark:border-slate-800">
-                      <div>
-                        <span className="font-mono font-black text-slate-950 dark:text-white text-sm">
-                          {order.order_number}
-                        </span>
-                        <span className="text-[10px] text-slate-500 font-mono block">
-                          Saca: {formatDateDisplay(order.target_delivery_date)}
-                        </span>
-                      </div>
-                      <span
-                        className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider ${
-                          order.transport_assigned
-                            ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300'
-                            : 'bg-amber-100 text-amber-800 dark:bg-amber-950/60 dark:text-amber-300'
-                        }`}
-                      >
-                        {order.transport_assigned ? '🚚 Unidad Asignada' : '⚠️ Sin Transporte'}
-                      </span>
-                    </div>
-
-                    <div className="space-y-2 text-xs">
-                      <div>
-                        <span className="text-[10px] text-slate-400 uppercase font-black block">Cliente &amp; Destino</span>
-                        <span className="font-bold text-slate-900 dark:text-slate-100 block truncate">
-                          {order.client_name}
-                        </span>
-                        <span className="text-[10px] text-slate-500">
-                          Zona {order.zone_code} {order.external_reference ? `• OC: ${order.external_reference}` : ''}
-                        </span>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 p-2 bg-slate-50 dark:bg-slate-800/40 rounded-xl">
-                        <div>
-                          <span className="text-[9.5px] text-slate-400 uppercase font-bold block">Origen Granja</span>
-                          <span className="font-mono font-bold text-emerald-700 dark:text-emerald-400 text-xs">
-                            {order.assigned_farm_code} &bull; {order.assigned_barn_code}
-                          </span>
-                        </div>
-                        <div>
-                          <span className="text-[9.5px] text-slate-400 uppercase font-bold block">Carga Total</span>
-                          <span className="font-mono font-black text-slate-900 dark:text-slate-100 text-xs">
-                            {birds.toLocaleString()} ({tons} Ton)
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between text-[11px] p-2 bg-blue-50/50 dark:bg-blue-950/30 rounded-xl border border-blue-100 dark:border-blue-900/40">
-                        <span className="font-bold text-blue-900 dark:text-blue-300">Jaulas Requeridas:</span>
-                        <span className="font-mono font-black text-blue-700 dark:text-blue-400 text-sm">
-                          ~{cages} jaulas
-                        </span>
-                      </div>
-
-                      {/* Info de Transporte Asignado si existe */}
-                      {order.transport_assigned && (
-                        <div className="p-2.5 bg-emerald-50/60 dark:bg-emerald-950/30 rounded-xl border border-emerald-200 dark:border-emerald-800 text-xs space-y-1">
-                          <div className="flex items-center justify-between font-bold">
-                            <span className="text-emerald-900 dark:text-emerald-200 font-mono font-black text-sm">
-                              {order.transport_plate}
-                            </span>
-                            <span className="text-[10px] uppercase font-bold text-emerald-700 dark:text-emerald-300">
-                              Turno {order.transport_shift || 'Madrugada'}
-                            </span>
-                          </div>
-                          <div className="text-[10px] text-slate-600 dark:text-slate-300">
-                            <strong>Chofer:</strong> {order.transport_driver_name}
-                            {order.transport_driver_phone ? ` (${order.transport_driver_phone})` : ''}
-                          </div>
-                          <div className="text-[10px] text-slate-500">
-                            <strong>Cuadrilla:</strong> {order.transport_crew || 'Oficial'}
-                          </div>
-                          <div className="text-[10px] text-slate-500 font-mono flex items-center gap-1 pt-0.5">
-                            <Clock className="w-3 h-3 text-slate-400" />
-                            <span>Slot Balanza: {order.loading_slot_time || '03:00 - 05:00 hrs'}</span>
-                          </div>
-                          {orders.some((o) => o.id !== order.id && o.transport_assigned && o.transport_plate === order.transport_plate && o.target_delivery_date === order.target_delivery_date) && (
-                            <div className="text-[9.5px] font-bold text-blue-700 dark:text-blue-300 bg-blue-100/60 dark:bg-blue-950/60 px-2 py-0.5 rounded-md flex items-center gap-1 mt-1">
-                              <Link2 className="w-3 h-3 text-blue-600" />
-                              <span>Ruta Multipedido Consolidada</span>
-                            </div>
-                          )}
-                          {order.is_split_child && (
-                            <div className="text-[9.5px] font-bold text-indigo-700 dark:text-indigo-300 bg-indigo-100/60 dark:bg-indigo-950/60 px-2 py-0.5 rounded-md flex items-center gap-1 mt-1">
-                              <Scissors className="w-3 h-3 text-indigo-600" />
-                              <span>Saldo Fraccionado (Split)</span>
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                      {/* Barra de Estado Telemática de 4 Fases (Ciclo de Vida) */}
-                      {order.transport_assigned && (
-                        <DispatchLifecycleStepper
-                          currentPhase={order.dispatch_phase || 'TRANSPORTE_ASIGNADO'}
-                          phaseUpdatedAt={order.dispatch_phase_updated_at}
-                        />
-                      )}
-
-                      {/* Botón de Asignación */}
-                      <div className="pt-2 flex items-center justify-between gap-1.5">
-                        {order.transport_assigned ? (
-                          <>
-                            <Button
-                              size="sm"
-                              onClick={() => setWhatsappModalOrder(order)}
-                              className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold flex items-center gap-1 shadow-xs"
-                              title="Enviar Manifiesto y Hoja de Ruta al Chofer por WhatsApp"
-                            >
-                              <MessageSquare className="w-3.5 h-3.5 fill-white" />
-                              <span>WhatsApp</span>
-                            </Button>
-                            <Button
-                              size="sm"
-                              onClick={() => {
-                                setSelectedGpsTruckId(order.transport_truck_id || 'VH-001');
-                                setActiveTab('mapa_gps');
-                              }}
-                              className="bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold flex items-center gap-1 shadow-xs"
-                              title="Monitorear ruta en mapa GPS"
-                            >
-                              <MapPin className="w-3.5 h-3.5" />
-                              <span>GPS</span>
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleOpenTransportModal(order)}
-                              className="text-xs font-bold text-slate-700 dark:text-slate-200"
-                            >
-                              Cambiar
-                            </Button>
-                            <Button
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => handleUnassignTransport(order)}
-                              className="text-xs text-rose-600 hover:text-rose-700 px-2"
-                              title="Liberar Transporte"
-                            >
-                              <Undo2 className="w-3.5 h-3.5" />
-                            </Button>
-                          </>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => handleOpenTransportModal(order)}
-                            className="w-full text-xs font-extrabold bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-1.5 shadow-xs"
-                          >
-                            <Truck className="w-3.5 h-3.5" />
-                            <span>Designar Transporte</span>
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* PESTAÑA 3: FLOTA DE DISTRIBUCIÓN (VEHÍCULOS Y CHOFERES) */}
-      {/* ========================================================================= */}
-      {activeTab === 'flota' && (
-        <div className="space-y-4">
-          <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 shadow-xs">
-            <div>
-              <h3 className="text-base font-black text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                <Truck className="w-5 h-5 text-emerald-600" />
-                Flota Oficial de Camiones &bull; Área de Distribución
-              </h3>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Capacidades jauleras, choferes titulares y cuadrillas de atrape asignadas para el transporte de saca.
-              </p>
-            </div>
-            <span className="text-xs font-mono font-bold text-slate-600 dark:text-slate-300">
-              Total Unidades: <strong>{vehicles.length}</strong>
-            </span>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {vehicles.map((veh) => {
-              // Calcular cuántos pedidos tiene asignados este camión
-              const assignedOrders = orders.filter(
-                (o) => o.transport_assigned && (o.transport_truck_id === veh.id || o.transport_plate === veh.plate)
-              );
-              const totalAssignedCages = assignedOrders.reduce(
-                (acc, o) => acc + (o.estimated_cages || computeCages(o.allocated_quantity || 0, o.density_birds_per_cage)),
-                0
-              );
-              const occupancyPct = Math.min(Math.round((totalAssignedCages / veh.capacity_cages) * 100), 100);
-
-              return (
-                <div
-                  key={veh.id}
-                  className="p-5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-xs space-y-3.5 hover:border-slate-300 dark:hover:border-slate-700 transition-all"
-                >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <span className="font-mono font-black text-lg text-slate-950 dark:text-white block">
-                        {veh.plate}
-                      </span>
-                      <span className="text-[11px] text-slate-500 font-bold block">{veh.model}</span>
-                    </div>
-                    <span className="px-2.5 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-50 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300 border border-emerald-200 dark:border-emerald-800">
-                      {veh.status}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 p-2.5 bg-slate-50 dark:bg-slate-800/50 rounded-xl text-xs">
-                    <div>
-                      <span className="text-[10px] text-slate-400 uppercase font-black block">Capacidad Jaulas</span>
-                      <span className="font-mono font-black text-slate-900 dark:text-slate-100 text-sm">
-                        {veh.capacity_cages} jlas
-                      </span>
-                      <span className="text-[9.5px] text-slate-400 block">~{veh.capacity_birds.toLocaleString()} aves</span>
-                    </div>
-
-                    <div>
-                      <span className="text-[10px] text-slate-400 uppercase font-black block">Ocupación Actual</span>
-                      <span className="font-mono font-black text-blue-700 dark:text-blue-400 text-sm">
-                        {totalAssignedCages} / {veh.capacity_cages}
-                      </span>
-                      <div className="w-full bg-slate-200 dark:bg-slate-700 h-1.5 rounded-full mt-1 overflow-hidden">
-                        <div
-                          className={`h-full rounded-full ${
-                            occupancyPct > 90 ? 'bg-amber-500' : 'bg-blue-600'
-                          }`}
-                          style={{ width: `${occupancyPct}%` }}
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1 text-xs">
-                    <div className="flex items-center gap-1.5 text-slate-700 dark:text-slate-300">
-                      <UserCheck className="w-3.5 h-3.5 text-slate-400" />
-                      <span>
-                        Chofer: <strong>{veh.driver_name}</strong>
-                      </span>
-                    </div>
-                    {veh.driver_phone && (
-                      <div className="flex items-center gap-1.5 text-slate-500 text-[11px]">
-                        <Phone className="w-3 h-3 text-slate-400" />
-                        <span>{veh.driver_phone}</span>
-                      </div>
-                    )}
-                    <div className="text-[11px] text-slate-500">
-                      Cuadrilla: <strong>{veh.default_crew || 'Oficial'}</strong>
-                    </div>
-                    <div className="text-[10px] text-slate-400 flex items-center gap-1 mt-1">
-                      <MapPin className="w-3 h-3" />
-                      <span>Zonas: {veh.zone_coverage.join(', ')}</span>
-                    </div>
-                  </div>
-
-                  {assignedOrders.length > 0 && (
-                    <div className="pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px]">
-                      <span className="text-[10px] font-black uppercase text-slate-400 block mb-1">
-                        Pedidos en Curso ({assignedOrders.length}):
-                      </span>
-                      <div className="flex flex-wrap gap-1">
-                        {assignedOrders.map((ao) => (
-                          <span
-                            key={ao.id}
-                            className="px-2 py-0.5 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-800 dark:text-blue-300 font-mono font-bold text-[10px]"
-                          >
-                            {ao.order_number} ({ao.target_delivery_date})
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* ========================================================================= */}
-      {/* PESTAÑA 4: OFERTA PECUARIA EN VIVO (TABLA GENERAL DE SALDO) */}
+      {/* PESTAÑA 1: SALDOS POR GALPÓN (PRIMERA VISTA DEL GESTOR COMERCIAL) */}
       {/* ========================================================================= */}
       {activeTab === 'pecuaria' && (
-        <div className="space-y-4">
-          <div className="p-4 bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/60 rounded-2xl flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-amber-600 text-white flex items-center justify-center shrink-0">
-                <Bird className="w-5 h-5" />
-              </div>
-              <div>
-                <h3 className="text-sm font-black text-slate-900 dark:text-slate-100">
-                  Oferta de Galpones Activos &bull; Módulo Pecuaria en Tiempo Real
-                </h3>
-                <p className="text-xs text-slate-600 dark:text-slate-400">
-                  Datos sincronizados de saldos disponibles, edad de lote y peso promedio para la toma de decisión del Gestor Comercial.
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl overflow-hidden shadow-xs">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-xs border-collapse">
-                <thead>
-                  <tr className="bg-slate-50 dark:bg-slate-800/60 text-[10px] font-black uppercase tracking-wider text-slate-600 dark:text-slate-300 border-b border-slate-200 dark:border-slate-700">
-                    <th className="py-2.5 px-3">Granja</th>
-                    <th className="py-2.5 px-3">Galpón</th>
-                    <th className="py-2.5 px-3 text-center">Edad</th>
-                    <th className="py-2.5 px-3 text-center">Sexo</th>
-                    <th className="py-2.5 px-3 text-right">Saldo Disponible</th>
-                    <th className="py-2.5 px-3 text-right">Peso Promedio</th>
-                    <th className="py-2.5 px-3 text-center">Estado Saca</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 font-mono">
-                  {pecuariaItems.map((item, idx) => (
-                    <tr key={idx} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
-                      <td className="py-2.5 px-3 font-bold text-slate-900 dark:text-slate-100">
-                        {item.farm_name} ({item.farm_code})
-                      </td>
-                      <td className="py-2.5 px-3 font-black text-emerald-700 dark:text-emerald-400">
-                        {item.barn_code}
-                      </td>
-                      <td className="py-2.5 px-3 text-center font-bold">{item.bird_age_days} días</td>
-                      <td className="py-2.5 px-3 text-center font-bold">
-                        {item.sex === 'MACHO' && <span className="text-blue-600">Macho</span>}
-                        {item.sex === 'HEMBRA' && <span className="text-rose-600">Hembra</span>}
-                        {item.sex !== 'MACHO' && item.sex !== 'HEMBRA' && <span>Mixto</span>}
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-black text-slate-900 dark:text-slate-100 text-sm">
-                        {item.barn_balance_available.toLocaleString()} aves
-                      </td>
-                      <td className="py-2.5 px-3 text-right font-bold text-slate-700 dark:text-slate-300">
-                        {item.average_weight_kg ? `${item.average_weight_kg.toFixed(2)} kg` : '-'}
-                      </td>
-                      <td className="py-2.5 px-3 text-center">
-                        <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-100 text-emerald-800 dark:bg-emerald-950/60 dark:text-emerald-300">
-                          {item.barn_status}
-                        </span>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <SaldosGalponPanel
+          items={pecuariaItems}
+          lastUpdated={pecuariaLastUpdated}
+          refreshing={refreshing}
+          onRefresh={() => fetchData(false)}
+          onBarnClosed={(barnId) =>
+            setPecuariaItems((prev) => prev.filter((item) => item.barn_id !== barnId))
+          }
+          onToast={showToast}
+        />
       )}
 
       {/* ========================================================================= */}
       {/* PESTAÑA 5: MONITOREO GPS EN VIVO (OPENSTREETMAP) */}
       {/* ========================================================================= */}
       {activeTab === 'mapa_gps' && (
-        <FlotaGpsMap initialSelectedTruckId={selectedGpsTruckId} readOnly={true} orders={orders} />
+        <FlotaGpsMap readOnly={true} orders={orders} />
       )}
 
       {/* ========================================================================= */}
@@ -2672,215 +1991,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
       )}
 
       {/* ========================================================================= */}
-      {/* MODAL 3: DESIGNACIÓN DE TRANSPORTE (ÁREA DE DISTRIBUCIÓN) */}
-      {/* ========================================================================= */}
-      {transportingOrder && (
-        <Modal
-          isOpen={!!transportingOrder}
-          onClose={() => setTransportingOrder(null)}
-          title={`Designación de Transporte de Distribución — ${transportingOrder.order_number}`}
-          size="lg"
-        >
-          <div className="space-y-4 text-xs">
-            {/* Resumen del pedido y cálculo de jaulas */}
-            <div className="p-3.5 bg-blue-50/70 dark:bg-blue-950/40 rounded-2xl border border-blue-200 dark:border-blue-900/60 grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Cliente &amp; Zona</span>
-                <span className="font-bold text-slate-900 dark:text-slate-100 block truncate">
-                  {transportingOrder.client_name}
-                </span>
-                <span className="text-[10px] text-blue-700 dark:text-blue-300 font-bold">
-                  Zona {transportingOrder.zone_code}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Origen Granja</span>
-                <span className="font-mono font-black text-emerald-700 dark:text-emerald-400 block">
-                  {transportingOrder.assigned_farm_code || 'TRAD1'} &bull; {transportingOrder.assigned_barn_code || 'G-01'}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[10px] text-slate-400 uppercase font-bold block">Aves Asignadas</span>
-                <span className="font-mono font-black text-slate-900 dark:text-slate-100 block text-sm">
-                  {(transportingOrder.allocated_quantity || transportingOrder.requested_quantity || 0).toLocaleString()}
-                </span>
-              </div>
-
-              <div>
-                <span className="text-[10px] text-blue-700 dark:text-blue-400 uppercase font-bold block">
-                  Jaulas Estimadas
-                </span>
-                <span className="font-mono font-black text-blue-800 dark:text-blue-300 block text-base">
-                  ~{transportCagesNeeded} jaulas
-                </span>
-              </div>
-            </div>
-
-            {/* Selección de Unidad de Flota */}
-            <div className="p-4 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl space-y-3">
-              <div>
-                <label className="text-[11px] font-bold text-slate-700 dark:text-slate-300 block mb-1">
-                  Seleccionar Camión / Unidad de Distribución:
-                </label>
-                <select
-                  value={transportVehicleId}
-                  onChange={(e) => handleVehicleSelectChange(e.target.value)}
-                  className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
-                >
-                  {vehicles.map((v) => (
-                    <option key={v.id} value={v.id}>
-                      {v.plate} &bull; {v.model} (Cap: {v.capacity_cages} jaulas / ~{v.capacity_birds} aves) — {v.driver_name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* MEJORA 4: Control Visual de Cubicaje y Consolidación de Carga Multipedido */}
-              <ConsolidationCubicajeBar
-                currentOrder={transportingOrder}
-                selectedVehicle={selectedTransportVehicle}
-                allOrders={orders}
-              />
-
-              {/* DETECCIÓN DE INCONSISTENCIAS DE TRANSPORTE */}
-              {isVehicleOvercapacity && (
-                <div className="p-3 bg-rose-50 dark:bg-rose-950/40 border border-rose-300 dark:border-rose-800 rounded-xl flex items-start gap-2.5 text-xs text-rose-800 dark:text-rose-300 animate-in fade-in">
-                  <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-black block">⚠️ Inconsistencia de Capacidad de Carga:</span>
-                    <span>
-                      El pedido requiere <strong>~{transportCagesNeeded} jaulas</strong>, lo cual supera la capacidad
-                      máxima de la unidad seleccionada (<strong>{selectedTransportVehicle?.capacity_cages} jaulas</strong>).
-                      Se sugiere asignar un <strong>Semirremolque Jaulero (600 - 650 jaulas)</strong> o programar un viaje
-                      complementario con otra unidad.
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {isZoneMismatch && (
-                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800 rounded-xl flex items-start gap-2.5 text-xs text-amber-800 dark:text-amber-300 animate-in fade-in">
-                  <Info className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <span className="font-black block">⚠️ Advertencia de Cobertura de Ruta:</span>
-                    <span>
-                      La unidad {selectedTransportVehicle?.plate} opera habitualmente en zonas [
-                      {selectedTransportVehicle?.zone_coverage.join(', ')}], mientras que el destino del cliente es{' '}
-                      <strong>Zona {transportingOrder.zone_code}</strong>.
-                    </span>
-                  </div>
-                </div>
-              )}
-
-              {/* Configuración de Turno, Chofer y Cuadrilla */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Turno de Saca / Despacho:
-                  </label>
-                  <select
-                    value={transportShift}
-                    onChange={(e) => setTransportShift(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="MADRUGADA">Madrugada (01:00 - 04:00 AM) — Fresco Mayorista</option>
-                    <option value="MANANA">Mañana (05:00 - 08:00 AM)</option>
-                    <option value="TARDE">Tarde (13:00 - 16:00 PM)</option>
-                    <option value="NOCHE">Noche (20:00 - 23:00 PM)</option>
-                  </select>
-                </div>
-
-                {/* MEJORA 6: Programación de Ventanas de Saca Nocturna (Slotting Horario) */}
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Ventana Horaria en Balanza (Slotting Nocturno):
-                  </label>
-                  <select
-                    value={transportLoadingSlot}
-                    onChange={(e) => setTransportLoadingSlot(e.target.value)}
-                    className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
-                  >
-                    <option value="21:00 - 23:00 hrs">🌙 21:00 - 23:00 hrs (Nocturno 1 - Carga Fresca)</option>
-                    <option value="23:00 - 01:00 hrs">🌙 23:00 - 01:00 hrs (Nocturno 2 - Pico Sin Calor)</option>
-                    <option value="01:00 - 03:00 hrs">🌌 01:00 - 03:00 hrs (Madrugada 1 - Vía Despejada)</option>
-                    <option value="03:00 - 05:00 hrs">🌌 03:00 - 05:00 hrs (Madrugada 2 - Pre-apertura)</option>
-                    <option value="05:00 - 07:00 hrs">☀️ 05:00 - 07:00 hrs (Diurno - Riesgo Térmico)</option>
-                  </select>
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Cuadrilla de Atrape / Carga:
-                  </label>
-                  <Input
-                    value={transportCrewName}
-                    onChange={(e) => setTransportCrewName(e.target.value)}
-                    placeholder="Ej: Cuadrilla Norte 1"
-                    className="text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Conductor / Chofer Designado:
-                  </label>
-                  <Input
-                    value={transportDriverName}
-                    onChange={(e) => setTransportDriverName(e.target.value)}
-                    className="text-xs font-bold"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                    Teléfono del Conductor:
-                  </label>
-                  <Input
-                    value={transportDriverPhone}
-                    onChange={(e) => setTransportDriverPhone(e.target.value)}
-                    placeholder="+51 987 654 321"
-                    className="text-xs font-mono"
-                  />
-                </div>
-              </div>
-
-              {/* Notas de Transporte */}
-              <div>
-                <label className="text-[11px] font-bold text-slate-600 dark:text-slate-400 block mb-1">
-                  Instrucciones de Rampa / Despacho:
-                </label>
-                <Input
-                  value={transportNotes}
-                  onChange={(e) => setTransportNotes(e.target.value)}
-                  placeholder="Ej: Ingreso por rampa auxiliar 2. Carga directa de galpón..."
-                  className="text-xs"
-                />
-              </div>
-            </div>
-
-            {/* Botones de Acción */}
-            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
-              <Button size="sm" variant="secondary" onClick={() => setTransportingOrder(null)}>
-                Cancelar
-              </Button>
-              <Button
-                size="sm"
-                onClick={handleConfirmTransport}
-                disabled={isSubmittingTransport}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-extrabold flex items-center gap-1.5 shadow-sm"
-              >
-                <Truck className="w-4 h-4" />
-                <span>{isSubmittingTransport ? 'Designando...' : 'Confirmar Designación de Transporte'}</span>
-              </Button>
-            </div>
-          </div>
-        </Modal>
-      )}
-
-      {/* ========================================================================= */}
-      {/* MODAL 4: DETALLE COMPLETO Y TRAZABILIDAD DE PEDIDO */}
+      {/* MODAL 3: DETALLE COMPLETO Y TRAZABILIDAD DE PEDIDO */}
       {/* ========================================================================= */}
       {detailOrder && (() => {
         const sellerFullName = resolveSellerFullName(detailOrder);
@@ -2902,27 +2013,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
           : null;
         const reservedQty = detailOrder.allocated_quantity || detailOrder.requested_quantity;
         const stockCoversReservation = barnStock ? barnStock.barn_balance_available >= reservedQty : null;
-
-        const PHASE_ORDER: DispatchPhase[] = [
-          'TRANSPORTE_ASIGNADO',
-          'EN_GRANJA_CARGANDO',
-          'EN_TRANSITO',
-          'ENTREGADO_CONFORME',
-        ];
-        const currentPhaseIndex = detailOrder.dispatch_phase
-          ? PHASE_ORDER.indexOf(detailOrder.dispatch_phase)
-          : -1;
-        const nextPhase: DispatchPhase | null =
-          currentPhaseIndex >= 0 && currentPhaseIndex < PHASE_ORDER.length - 1
-            ? PHASE_ORDER[currentPhaseIndex + 1]
-            : null;
-
-        const phaseLabels: Record<DispatchPhase, string> = {
-          TRANSPORTE_ASIGNADO: 'Transporte asignado',
-          EN_GRANJA_CARGANDO: 'Cargando en granja',
-          EN_TRANSITO: 'En tránsito',
-          ENTREGADO_CONFORME: 'Entregado',
-        };
 
         return (
           <Modal
@@ -3308,7 +2398,7 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                     </div>
                   ) : (
                     <span className="text-slate-500 italic text-[11px] block pt-1">
-                      Unidad de transporte pendiente de asignación por el Gestor Comercial.
+                      Unidad de transporte pendiente de asignación en el módulo Control de Flota.
                     </span>
                   )}
                 </div>
@@ -3356,21 +2446,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                     </Button>
                   )}
 
-                  {detailOrder.status === 'APROBADO_RESERVADO' && !detailOrder.transport_assigned && (
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        const target = detailOrder;
-                        setDetailOrder(null);
-                        handleOpenTransportModal(target);
-                      }}
-                      className="bg-blue-600 hover:bg-blue-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
-                    >
-                      <Truck className="w-3.5 h-3.5" />
-                      <span>Asignar transporte</span>
-                    </Button>
-                  )}
-
                   {detailOrder.transport_assigned && (
                     <Button
                       size="sm"
@@ -3379,17 +2454,6 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                     >
                       <MapPin className="w-3.5 h-3.5" />
                       <span>Ver ruta</span>
-                    </Button>
-                  )}
-
-                  {detailOrder.transport_assigned && nextPhase && (
-                    <Button
-                      size="sm"
-                      onClick={() => handleUpdateDispatchPhase(detailOrder, nextPhase)}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold flex items-center gap-1.5 shadow-xs text-xs"
-                    >
-                      <ChevronRight className="w-3.5 h-3.5" />
-                      <span>Avanzar a: {phaseLabels[nextPhase]}</span>
                     </Button>
                   )}
 

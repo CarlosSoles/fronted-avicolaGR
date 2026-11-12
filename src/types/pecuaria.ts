@@ -87,10 +87,13 @@ export interface TablaGeneralSaldoItem {
   batch_code?: string;
   
   // Las columnas obligatorias
+  campaign?: string;
   bird_age_days: number;
   specials_general_count: number;
   barn_balance_available: number;
   average_weight_kg: number | null;
+  average_weight_g?: number | null;
+  standard_weight_g?: number | null;
   min_weight_kg?: number | null;
   max_weight_kg?: number | null;
   weight_range_label?: string | null;
@@ -142,6 +145,11 @@ export function generateInitialOfficialData(): TablaGeneralSaldoItem[] {
       }
 
       const available = Math.max(0, physical - specials - reserved);
+      const baseWeightG = isMacho
+        ? 2589 + Math.max(0, age - 42) * 38 - Math.pow(Math.max(0, age - 42), 1.45) * 0.45
+        : 2184 + Math.max(0, age - 42) * 28 - Math.pow(Math.max(0, age - 42), 1.4) * 0.45;
+      const standardWeightG = Math.round(baseWeightG);
+      const avgWeightG = Math.round((standardWeightG * (0.96 + ((farmIdx * 7 + b * 13) % 9) * 0.01) + 0.37) * 100) / 100;
 
       items.push({
         farm_id: `farm-uuid-${farm.code.toLowerCase()}`,
@@ -153,10 +161,13 @@ export function generateInitialOfficialData(): TablaGeneralSaldoItem[] {
         barn_code: barnCode,
         barn_status: 'OPERATIVO',
         batch_code: `LOT-${farm.code}-${String(b).padStart(2, '0')}`,
+        campaign: '208',
         bird_age_days: age,
         specials_general_count: specials,
         barn_balance_available: available,
         average_weight_kg: roundedAvg,
+        average_weight_g: avgWeightG,
+        standard_weight_g: standardWeightG,
         min_weight_kg: minW,
         max_weight_kg: maxW,
         weight_range_label: `${minW.toFixed(2)} - ${maxW.toFixed(2)} kg`,
@@ -164,6 +175,7 @@ export function generateInitialOfficialData(): TablaGeneralSaldoItem[] {
         physical_count: physical,
         reserved_count: reserved,
         sold_pending_count: 0,
+        last_inventory_update: new Date().toISOString(),
         is_closed: false,
       });
     }

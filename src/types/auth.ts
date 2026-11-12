@@ -4,7 +4,8 @@ export type UserRole =
   | 'supervisor_pecuario'
   | 'vendedor'
   | 'gestor_comercial'
-  | 'gerente_comercial';
+  | 'gerente_comercial'
+  | 'controlador_flota';
 
 export interface UserProfile {
   id: string;

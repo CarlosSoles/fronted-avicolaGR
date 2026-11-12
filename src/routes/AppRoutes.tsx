@@ -6,6 +6,7 @@ import { DashboardLayout } from '../layouts/DashboardLayout';
 import { PecuariaDashboardPage } from '../modules/pecuaria/pages/PecuariaDashboardPage';
 import { ComercialPage } from '../modules/comercial/pages/ComercialPage';
 import { GestionComercialPage } from '../modules/gerencia/pages/GestionComercialPage';
+import { ControlFlotaPage } from '../modules/flota/pages/ControlFlotaPage';
 import { AdminPage } from '../modules/admin/pages/AdminPage';
 import { AccountPage } from '../modules/account/pages/AccountPage';
 import { NotificationsPage } from '../modules/notifications/pages/NotificationsPage';
@@ -23,6 +24,8 @@ export const getDefaultRouteForRole = (role?: UserRole): string => {
       return '/gestion-comercial';
     case 'vendedor':
       return '/comercial';
+    case 'controlador_flota':
+      return '/control-flota';
     default:
       return '/login';
   }
@@ -102,6 +105,14 @@ export const AppRoutes: React.FC = () => {
           element={
             <ProtectedRoute allowedRoles={['gestor_comercial', 'gerente_comercial', 'admin_sistema']}>
               <GestionComercialPage />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/control-flota"
+          element={
+            <ProtectedRoute allowedRoles={['controlador_flota', 'admin_sistema']}>
+              <ControlFlotaPage />
             </ProtectedRoute>
           }
         />
