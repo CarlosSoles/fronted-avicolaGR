@@ -91,7 +91,7 @@ export const LoginPage: React.FC = () => {
             </h1>
 
             <p className="text-sm text-slate-200 font-medium leading-relaxed">
-              Plataforma tecnológica de Avícola GR para la supervisión de galpones, captura de pesajes ave por ave y sincronización comercial en tiempo real.
+              Plataforma tecnológica de Avícola - Grupo Rocío para la supervisión de galpones, captura de pesajes ave por ave y sincronización comercial en tiempo real.
             </p>
 
             {/* Métricas clave en la base del banner */}
@@ -155,7 +155,7 @@ export const LoginPage: React.FC = () => {
               <img src={logoRocio} alt="Logo El Rocío" className="h-16 w-auto object-contain" />
             </div>
             <h2 className="text-2xl sm:text-3xl font-black text-slate-950 dark:text-white tracking-tight">
-              Avícola GR
+              Avícola - Grupo Rocío
             </h2>
             <p className="text-xs text-red-700 dark:text-red-400 font-bold uppercase tracking-widest">
               Sistema de Planificación de Saca &amp; Stock

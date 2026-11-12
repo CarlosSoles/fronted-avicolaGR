@@ -85,7 +85,7 @@ export const AccountPage: React.FC = () => {
           Mi Cuenta &amp; Perfil de Usuario
         </h1>
         <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-          Información de acceso, credenciales de seguridad y ámbito asignado en Avícola GR.
+          Información de acceso, credenciales de seguridad y ámbito asignado en Avícola - Grupo Rocío.
         </p>
       </div>
 
@@ -99,7 +99,7 @@ export const AccountPage: React.FC = () => {
           <div className="flex-1 text-center sm:text-left space-y-2">
             <div className="flex flex-col sm:flex-row sm:items-center gap-2">
               <h2 className="text-xl font-extrabold text-slate-900 dark:text-slate-100">
-                {user?.full_name || 'Colaborador Avícola GR'}
+                {user?.full_name || 'Colaborador Avícola - Grupo Rocío'}
               </h2>
               <span className="inline-block px-2.5 py-0.5 rounded-full text-xs font-bold bg-red-50 text-red-700 border border-red-200 dark:bg-red-950/40 dark:text-red-400 dark:border-red-900/60 self-center sm:self-auto">
                 {user?.role ? roleLabels[user.role] || user.role : 'Usuario'}

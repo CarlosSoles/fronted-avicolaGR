@@ -30,7 +30,7 @@ export const PecuariaDashboardPage: React.FC = () => {
   const [selectedFarmCode, setSelectedFarmCode] = useState<string>('ALL');
   const [selectedSex, setSelectedSex] = useState<string>('ALL');
   const [selectedThreshold, setSelectedThreshold] = useState<'ALL' | 'PLUS_1000' | 'MINUS_1000'>('ALL');
-  const [selectedAgeFilter, setSelectedAgeFilter] = useState<'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38'>('ALL');
+  const [selectedAgeFilter, setSelectedAgeFilter] = useState<'ALL' | 'SACA_READY' | 'PRE_SACA' | 'PRIORITY'>('ALL');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [hasNewIngestion, setHasNewIngestion] = useState<boolean>(false);
 
@@ -121,14 +121,19 @@ export const PecuariaDashboardPage: React.FC = () => {
         return false;
       }
 
-      // Filtro por Edad
-      if (selectedAgeFilter === 'OVER_45' && item.bird_age_days <= 45) {
+      // Filtro por Criterio de Saca / Edad (Machos >= 39d, Hembras >= 36d, Mixtos >= 36d)
+      const isSacaReady =
+        (item.sex === 'MACHO' && item.bird_age_days >= 39) ||
+        (item.sex === 'HEMBRA' && item.bird_age_days >= 36) ||
+        (item.sex === 'MIXTO' && item.bird_age_days >= 36);
+
+      if (selectedAgeFilter === 'SACA_READY' && !isSacaReady) {
         return false;
       }
-      if (selectedAgeFilter === 'RANGE_38_45' && (item.bird_age_days < 38 || item.bird_age_days > 45)) {
+      if (selectedAgeFilter === 'PRE_SACA' && isSacaReady) {
         return false;
       }
-      if (selectedAgeFilter === 'UNDER_38' && item.bird_age_days >= 38) {
+      if (selectedAgeFilter === 'PRIORITY' && item.bird_age_days < 40) {
         return false;
       }
 
@@ -143,11 +148,21 @@ export const PecuariaDashboardPage: React.FC = () => {
       return true;
     });
 
-    // REGLA: COLOCAR EN PRIORIDAD LA EDAD DE AVE MAYOR A 45 DÍAS PARA EL CIERRE DE GALPÓN
+    // REGLA: COLOCAR EN PRIORIDAD LOTES EN SACA Y CON MAYOR EDAD (SACA URGENTE)
     return list.sort((a, b) => {
-      const aOver45 = a.bird_age_days > 45 ? 1 : 0;
-      const bOver45 = b.bird_age_days > 45 ? 1 : 0;
-      if (aOver45 !== bOver45) return bOver45 - aOver45; // Los mayores a 45 días van al inicio
+      const aReady =
+        (a.sex === 'MACHO' && a.bird_age_days >= 39) ||
+        (a.sex === 'HEMBRA' && a.bird_age_days >= 36) ||
+        (a.sex === 'MIXTO' && a.bird_age_days >= 36)
+          ? 1
+          : 0;
+      const bReady =
+        (b.sex === 'MACHO' && b.bird_age_days >= 39) ||
+        (b.sex === 'HEMBRA' && b.bird_age_days >= 36) ||
+        (b.sex === 'MIXTO' && b.bird_age_days >= 36)
+          ? 1
+          : 0;
+      if (aReady !== bReady) return bReady - aReady; // Primero los aptos para saca
       return b.bird_age_days - a.bird_age_days; // Orden descendente por edad
     });
   }, [data, selectedFarmCode, selectedSex, selectedThreshold, selectedAgeFilter, searchQuery]);
@@ -426,10 +441,10 @@ export const PecuariaDashboardPage: React.FC = () => {
             </select>
           </div>
 
-          {/* Filtro Edad / Prioridad: 2 cols */}
+          {/* Filtro Edad / Criterio de Saca: 2 cols */}
           <div className="lg:col-span-2 space-y-1">
             <label className="block text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Edad / Prioridad
+              Criterio de Saca / Edad
             </label>
             <select
               value={selectedAgeFilter}
@@ -437,9 +452,9 @@ export const PecuariaDashboardPage: React.FC = () => {
               className="w-full px-3 py-2 text-xs bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-red-600"
             >
               <option value="ALL">Todas las Edades</option>
-              <option value="OVER_45">🚨 &gt; 45 días (Prioridad)</option>
-              <option value="RANGE_38_45">38 a 45 días (Saca)</option>
-              <option value="UNDER_38">&lt; 38 días (Crecimiento)</option>
+              <option value="SACA_READY">Aptos para Saca (M &ge; 39d / H &ge; 36d)</option>
+              <option value="PRE_SACA">En Crecimiento / Pre-saca</option>
+              <option value="PRIORITY">🚨 &ge; 40 días (Saca Prioritaria)</option>
             </select>
           </div>
         </div>

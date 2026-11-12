@@ -80,7 +80,7 @@ export const ProtectedRoute: React.FC<ProtectedRouteProps> = ({ children, allowe
       <div className="min-h-screen bg-white dark:bg-slate-950 flex items-center justify-center">
         <div className="flex flex-col items-center gap-3">
           <div className="animate-spin rounded-full h-10 w-10 border-4 border-red-600 border-r-transparent" />
-          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Validando sesión en Avícola GR...</p>
+          <p className="text-xs text-slate-500 dark:text-slate-400 font-medium tracking-wide">Validando sesión en Avícola - Grupo Rocío...</p>
         </div>
       </div>
     );
