@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useTheme } from '@/context/ThemeContext';
@@ -27,7 +27,17 @@ export const LoginPage: React.FC = () => {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [slowWakeupNotice, setSlowWakeupNotice] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setSlowWakeupNotice(false);
+      return;
+    }
+    const timer = setTimeout(() => setSlowWakeupNotice(true), 3500);
+    return () => clearTimeout(timer);
+  }, [isLoading]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -208,8 +218,13 @@ export const LoginPage: React.FC = () => {
                 className="w-full mt-2 bg-red-600 hover:bg-red-700 text-white font-extrabold py-3 rounded-xl shadow-lg shadow-red-600/25 transition-all text-sm tracking-wide"
                 isLoading={isLoading}
               >
-                Iniciar Sesión
+                {slowWakeupNotice ? 'Conectando con el servidor...' : 'Iniciar Sesión'}
               </Button>
+              {slowWakeupNotice && (
+                <p className="text-[11px] text-center text-slate-500 dark:text-slate-400">
+                  El servidor estuvo en reposo y está iniciando; espere unos segundos.
+                </p>
+              )}
             </form>
           </div>
         </div>

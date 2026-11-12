@@ -1,6 +1,59 @@
 import { supabase } from './supabase';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
+
+const RETRYABLE_STATUS_CODES = new Set([429, 502, 503, 504]);
+
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * Ejecuta fetch con reintentos escalonados ante estados transitorios de arranque
+ * en frío o limitación temporal del proxy/servidor (429, 502, 503, 504).
+ */
+export async function fetchWithRetry(
+  url: string,
+  options: RequestInit = {},
+  retryDelaysMs: number[] = [2500, 5000]
+): Promise<Response> {
+  let response = await fetch(url, options);
+  for (const delayMs of retryDelaysMs) {
+    if (!RETRYABLE_STATUS_CODES.has(response.status)) {
+      return response;
+    }
+    await sleep(delayMs);
+    response = await fetch(url, options);
+  }
+  return response;
+}
+
+/**
+ * Extrae un mensaje legible de error HTTP sin ocultar fallos 429/5xx del servidor o proxy.
+ */
+export async function parseApiError(response: Response, fallbackMessage: string): Promise<string> {
+  let detail: string | undefined;
+  try {
+    const rawText = await response.text();
+    if (rawText) {
+      try {
+        const parsed = JSON.parse(rawText);
+        detail = parsed?.detail || parsed?.message;
+      } catch {
+        // El cuerpo no es JSON (p. ej. texto plano "Too Many Requests" o HTML de Cloudflare)
+      }
+    }
+  } catch {
+    // Ignorar error de lectura de cuerpo
+  }
+
+  if (detail) return detail;
+  if (response.status === 429) {
+    return 'El servidor está despertando o limitó temporalmente las solicitudes (HTTP 429). Espere unos segundos e intente nuevamente.';
+  }
+  if (response.status === 502 || response.status === 503 || response.status === 504) {
+    return `El servidor está iniciando (HTTP ${response.status}). Espere unos segundos e intente nuevamente.`;
+  }
+  return fallbackMessage;
+}
 
 export async function apiClient<T>(
   endpoint: string,
@@ -44,20 +97,18 @@ export async function apiClient<T>(
   }
 
   const url = `${API_BASE_URL}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+  const method = (options.method || 'GET').toUpperCase();
+  const isIdempotent = method === 'GET' || method === 'HEAD' || method === 'OPTIONS';
 
-  const response = await fetch(url, {
-    ...options,
-    headers,
-  });
+  const response = isIdempotent
+    ? await fetchWithRetry(url, { ...options, headers }, [2500, 5000])
+    : await fetch(url, { ...options, headers });
 
   if (!response.ok) {
-    let errorDetail = `Error ${response.status}: ${response.statusText}`;
-    try {
-      const errorJson = await response.json();
-      errorDetail = errorJson.detail || errorJson.message || errorDetail;
-    } catch {
-      // Ignorar si no es JSON
-    }
+    const errorDetail = await parseApiError(
+      response,
+      `Error ${response.status}: ${response.statusText}`
+    );
     throw new Error(errorDetail);
   }
 

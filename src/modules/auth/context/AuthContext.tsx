@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import { API_BASE_URL, fetchWithRetry, parseApiError } from '@/lib/api';
 import { UserProfile, UserRole } from '@/types/auth';
 
 interface AuthContextType {
@@ -12,8 +13,6 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1';
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -100,16 +99,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanPass = passwordInput;
 
     try {
-      // 1. Intento de inicio de sesión contra el Backend API
+      // 1. Intento de inicio de sesión contra el Backend API (con reintento ante arranque en frío / 429)
       try {
-        const res = await fetch(`${API_BASE_URL}/auth/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            username: cleanUser,
-            password: cleanPass,
-          }),
-        });
+        const res = await fetchWithRetry(
+          `${API_BASE_URL}/auth/login`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              username: cleanUser,
+              password: cleanPass,
+            }),
+          },
+          [4000, 7000, 10000]
+        );
 
         if (res.ok) {
           const data = await res.json();
@@ -122,8 +125,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('avicola_token', accessToken);
           return authenticatedUser;
         } else {
-          const errData = await res.json().catch(() => ({}));
-          const errMsg = errData.detail || 'Usuario o contraseña incorrectos.';
+          const errMsg = await parseApiError(res, 'Usuario o contraseña incorrectos.');
           throw new Error(errMsg);
         }
       } catch (apiErr: any) {
