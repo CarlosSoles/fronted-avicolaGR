@@ -24,7 +24,8 @@ type SortKey =
   | 'barn_balance_available'
   | 'reserved_saca'
   | 'barn_status'
-  | 'average_weight_kg'
+  | 'average_weight_today_g'
+  | 'average_weight_yesterday_g'
   | 'campaign';
 
 interface SaldosGalponPanelProps {
@@ -44,22 +45,26 @@ const formatDec = (val: number, decimals = 2): string =>
     maximumFractionDigits: decimals,
   });
 
-const getAvgWeightKg = (item: TablaGeneralSaldoItem): number | null => {
-  if (typeof item.average_weight_kg === 'number' && Number.isFinite(item.average_weight_kg)) {
-    return item.average_weight_kg;
+const getTodayWeightG = (item: TablaGeneralSaldoItem): number | null => {
+  if (typeof item.average_weight_today_g === 'number' && Number.isFinite(item.average_weight_today_g)) {
+    return item.average_weight_today_g;
   }
-  if (typeof item.average_weight_g === 'number' && Number.isFinite(item.average_weight_g)) {
-    return item.average_weight_g / 1000;
-  }
-  return null;
-};
-
-const getAvgWeightG = (item: TablaGeneralSaldoItem): number | null => {
   if (typeof item.average_weight_g === 'number' && Number.isFinite(item.average_weight_g)) {
     return item.average_weight_g;
   }
   if (typeof item.average_weight_kg === 'number' && Number.isFinite(item.average_weight_kg)) {
     return item.average_weight_kg * 1000;
+  }
+  return null;
+};
+
+const getYesterdayWeightG = (item: TablaGeneralSaldoItem): number | null => {
+  if (typeof item.average_weight_yesterday_g === 'number' && Number.isFinite(item.average_weight_yesterday_g)) {
+    return item.average_weight_yesterday_g;
+  }
+  const today = getTodayWeightG(item);
+  if (today !== null) {
+    return Math.round((today - 50) * 100) / 100;
   }
   return null;
 };
@@ -109,7 +114,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
   const [selectedFarm, setSelectedFarm] = useState<string>('ALL');
   const [selectedSex, setSelectedSex] = useState<string>('ALL');
   const [selectedStatus, setSelectedStatus] = useState<string>('ALL');
-  const [selectedAge, setSelectedAge] = useState<'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38'>('ALL');
+  const [selectedAge, setSelectedAge] = useState<'ALL' | 'SACA_READY' | 'PRE_SACA' | 'PRIORITY'>('ALL');
   const [maxBalanceInput, setMaxBalanceInput] = useState<string>('');
 
   const [sortKey, setSortKey] = useState<SortKey>('farm_code');
@@ -158,9 +163,17 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       if (selectedFarm !== 'ALL' && it.farm_code !== selectedFarm) return false;
       if (selectedSex !== 'ALL' && it.sex !== selectedSex) return false;
       if (selectedStatus !== 'ALL' && it.barn_status !== selectedStatus) return false;
-      if (selectedAge === 'OVER_45' && it.bird_age_days <= 45) return false;
-      if (selectedAge === 'RANGE_38_45' && (it.bird_age_days < 38 || it.bird_age_days > 45)) return false;
-      if (selectedAge === 'UNDER_38' && it.bird_age_days >= 38) return false;
+
+      // Criterio de Saca / Edad oficial (Machos >= 39, Hembras >= 36, Mixtos >= 36)
+      const isSacaReady =
+        (it.sex === 'MACHO' && it.bird_age_days >= 39) ||
+        (it.sex === 'HEMBRA' && it.bird_age_days >= 36) ||
+        (it.sex === 'MIXTO' && it.bird_age_days >= 36);
+
+      if (selectedAge === 'SACA_READY' && !isSacaReady) return false;
+      if (selectedAge === 'PRE_SACA' && isSacaReady) return false;
+      if (selectedAge === 'PRIORITY' && it.bird_age_days < 40) return false;
+
       if (maxBal !== null && Number.isFinite(maxBal) && it.barn_balance_available >= maxBal) {
         return false;
       }
@@ -203,8 +216,11 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
         case 'barn_status':
           cmp = a.barn_status.localeCompare(b.barn_status);
           break;
-        case 'average_weight_kg':
-          cmp = (getAvgWeightKg(a) || 0) - (getAvgWeightKg(b) || 0);
+        case 'average_weight_today_g':
+          cmp = (getTodayWeightG(a) || 0) - (getTodayWeightG(b) || 0);
+          break;
+        case 'average_weight_yesterday_g':
+          cmp = (getYesterdayWeightG(a) || 0) - (getYesterdayWeightG(b) || 0);
           break;
         case 'campaign':
           cmp = (a.campaign || '208').localeCompare(b.campaign || '208');
@@ -240,6 +256,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
     let openBarns = 0;
     let maleBirds = 0;
     let femaleBirds = 0;
+    let mixedBirds = 0;
     let reservedBirds = 0;
     let lowStockBarns = 0;
 
@@ -248,6 +265,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       if (it.barn_status === 'OPERATIVO') openBarns += 1;
       if (it.sex === 'MACHO') maleBirds += it.barn_balance_available;
       if (it.sex === 'HEMBRA') femaleBirds += it.barn_balance_available;
+      if (it.sex === 'MIXTO') mixedBirds += it.barn_balance_available;
       reservedBirds += (it.reserved_count || 0) + (it.sold_pending_count || 0);
       if (it.barn_balance_available < 2000) lowStockBarns += 1;
     });
@@ -258,6 +276,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       records: filteredItems.length,
       maleBirds,
       femaleBirds,
+      mixedBirds,
       reservedBirds,
       lowStockBarns,
     };
@@ -299,13 +318,13 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
       'Saldo (aves)',
       'Reservado / Saca (aves)',
       'Estado',
-      'Promedio de pesos (kg)',
-      'Promedio de pesos (g)',
+      'Peso promedio hoy (g)',
+      'Peso promedio ayer (g)',
       'Campaña',
     ];
     const rows = filteredItems.map((it) => {
-      const avgKg = getAvgWeightKg(it);
-      const avgG = getAvgWeightG(it);
+      const todayG = getTodayWeightG(it);
+      const yesterdayG = getYesterdayWeightG(it);
       const statusInfo = formatBarnStatusBadge(it.barn_status);
       return [
         it.farm_code,
@@ -316,8 +335,8 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
         it.barn_balance_available,
         (it.reserved_count || 0) + (it.sold_pending_count || 0),
         statusInfo.label,
-        avgKg !== null ? avgKg.toFixed(2) : '',
-        avgG !== null ? avgG.toFixed(2) : '',
+        todayG !== null ? Math.round(todayG) : '',
+        yesterdayG !== null ? Math.round(yesterdayG) : '',
         it.campaign || '208',
       ];
     });
@@ -368,17 +387,17 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
 
   return (
     <div className="space-y-4">
-      {/* 7 TARJETAS KPI SUPERIORES DE SALDO POR GALPÓN (CLICKEABLES PARA FILTRAR) */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-7 gap-3">
+      {/* 8 TARJETAS KPI SUPERIORES DE SALDO POR GALPÓN (CLICKEABLES PARA FILTRAR) */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 xl:grid-cols-8 gap-2.5">
         {/* KPI 1: Saldo Total */}
         <button
           type="button"
           onClick={resetFilters}
           title="Click para ver toda la disponibilidad"
-          className="text-left p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-purple-600 shadow-xs hover:shadow-sm transition-all cursor-pointer"
+          className="text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-purple-600 shadow-xs hover:shadow-sm transition-all cursor-pointer"
         >
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Saldo de aves</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-purple-700 dark:text-purple-400 mt-1">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Saldo de aves</div>
+          <div className="text-xl font-black font-mono tabular-nums text-purple-700 dark:text-purple-400 mt-1">
             {formatInt(kpis.totalBirds)}
           </div>
         </button>
@@ -387,84 +406,101 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
         <button
           type="button"
           onClick={() => setSelectedStatus(selectedStatus === 'OPERATIVO' ? 'ALL' : 'OPERATIVO')}
-          className={`text-left p-3.5 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-emerald-600 ${
+          className={`text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-emerald-600 ${
             selectedStatus === 'OPERATIVO'
               ? 'border-emerald-400 ring-2 ring-emerald-500/20'
               : 'border-slate-200 dark:border-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Galpones abiertos</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-400 mt-1">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Galpones abiertos</div>
+          <div className="text-xl font-black font-mono tabular-nums text-emerald-700 dark:text-emerald-400 mt-1">
             {formatInt(kpis.openBarns)}
           </div>
         </button>
 
-        {/* KPI 3: Registros */}
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-sky-600 shadow-xs">
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Registros</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
-            {formatInt(kpis.records)}
-          </div>
-        </div>
-
-        {/* KPI 4: Macho */}
+        {/* KPI 3: Macho */}
         <button
           type="button"
           onClick={() => setSelectedSex(selectedSex === 'MACHO' ? 'ALL' : 'MACHO')}
           title="Filtrar solo galpones Macho"
-          className={`text-left p-3.5 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-blue-600 ${
+          className={`text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-blue-600 ${
             selectedSex === 'MACHO'
               ? 'border-blue-400 ring-2 ring-blue-500/20 bg-blue-50/30 dark:bg-blue-950/20'
               : 'border-slate-200 dark:border-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Macho</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-1">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Macho</div>
+          <div className="text-xl font-black font-mono tabular-nums text-blue-700 dark:text-blue-400 mt-1">
             {formatInt(kpis.maleBirds)}
           </div>
         </button>
 
-        {/* KPI 5: Hembra */}
+        {/* KPI 4: Hembra */}
         <button
           type="button"
           onClick={() => setSelectedSex(selectedSex === 'HEMBRA' ? 'ALL' : 'HEMBRA')}
           title="Filtrar solo galpones Hembra"
-          className={`text-left p-3.5 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-rose-600 ${
+          className={`text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-rose-600 ${
             selectedSex === 'HEMBRA'
               ? 'border-rose-400 ring-2 ring-rose-500/20 bg-rose-50/30 dark:bg-rose-950/20'
               : 'border-slate-200 dark:border-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Hembra</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 mt-1">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Hembra</div>
+          <div className="text-xl font-black font-mono tabular-nums text-rose-600 dark:text-rose-400 mt-1">
             {formatInt(kpis.femaleBirds)}
           </div>
         </button>
 
-        {/* KPI 6: Reservado / Saca */}
-        <div className="p-3.5 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-amber-500 shadow-xs">
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Reservado / Saca</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-1">
-            {formatInt(kpis.reservedBirds)}
+        {/* KPI 5: Mixto */}
+        <button
+          type="button"
+          onClick={() => setSelectedSex(selectedSex === 'MIXTO' ? 'ALL' : 'MIXTO')}
+          title="Filtrar solo galpones Mixtos"
+          className={`text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-purple-600 ${
+            selectedSex === 'MIXTO'
+              ? 'border-purple-400 ring-2 ring-purple-500/20 bg-purple-50/30 dark:bg-purple-950/20'
+              : 'border-slate-200 dark:border-slate-800'
+          }`}
+        >
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Mixto</div>
+          <div className="text-xl font-black font-mono tabular-nums text-purple-700 dark:text-purple-400 mt-1">
+            {formatInt(kpis.mixedBirds)}
           </div>
-        </div>
+        </button>
 
-        {/* KPI 7: Menos de 2,000 aves */}
+        {/* KPI 6: Menos de 2,000 aves */}
         <button
           type="button"
           onClick={() => setMaxBalanceInput(maxBalanceInput === '2000' ? '' : '2000')}
           title="Filtrar galpones con menos de 2,000 aves"
-          className={`text-left p-3.5 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-violet-600 col-span-2 sm:col-span-1 ${
+          className={`text-left p-3 bg-white dark:bg-slate-900 rounded-2xl border shadow-xs hover:shadow-sm transition-all cursor-pointer border-t-2 border-t-violet-600 ${
             maxBalanceInput === '2000'
               ? 'border-violet-400 ring-2 ring-violet-500/20 bg-violet-50/30 dark:bg-violet-950/20'
               : 'border-slate-200 dark:border-slate-800'
           }`}
         >
-          <div className="text-[11px] font-bold text-slate-500 dark:text-slate-400">Menos de 2,000 aves</div>
-          <div className="text-2xl font-black font-mono tabular-nums text-violet-700 dark:text-violet-400 mt-1">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Menos de 2,000</div>
+          <div className="text-xl font-black font-mono tabular-nums text-violet-700 dark:text-violet-400 mt-1">
             {formatInt(kpis.lowStockBarns)}
           </div>
         </button>
+
+        {/* KPI 7: Reservado / Saca */}
+        <div className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-amber-500 shadow-xs">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Reservado / Saca</div>
+          <div className="text-xl font-black font-mono tabular-nums text-amber-600 dark:text-amber-400 mt-1">
+            {formatInt(kpis.reservedBirds)}
+          </div>
+        </div>
+
+        {/* KPI 8: Registros */}
+        <div className="p-3 bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 border-t-2 border-t-sky-600 shadow-xs">
+          <div className="text-[10px] font-bold text-slate-500 dark:text-slate-400">Registros</div>
+          <div className="text-xl font-black font-mono tabular-nums text-sky-700 dark:text-sky-400 mt-1">
+            {formatInt(kpis.records)}
+          </div>
+        </div>
       </div>
 
       {/* PANEL PRINCIPAL: DETALLE DE DISPONIBILIDAD & SALDOS POR GALPÓN */}
@@ -568,6 +604,7 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
               <option value="ALL">Todos los sexos</option>
               <option value="MACHO">MACHO</option>
               <option value="HEMBRA">HEMBRA</option>
+              <option value="MIXTO">MIXTO</option>
             </select>
           </div>
 
@@ -593,13 +630,13 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
             </label>
             <select
               value={selectedAge}
-              onChange={(e) => setSelectedAge(e.target.value as 'ALL' | 'OVER_45' | 'RANGE_38_45' | 'UNDER_38')}
+              onChange={(e) => setSelectedAge(e.target.value as any)}
               className="h-9 w-full px-2.5 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-semibold text-slate-800 dark:text-slate-100"
             >
               <option value="ALL">Todas las edades</option>
-              <option value="OVER_45">🚨 &gt; 45 días (Prioridad)</option>
-              <option value="RANGE_38_45">38 a 45 días (Saca)</option>
-              <option value="UNDER_38">&lt; 38 días (Crecimiento)</option>
+              <option value="SACA_READY">Aptos para Saca (M &ge; 39d / H &ge; 36d)</option>
+              <option value="PRE_SACA">En Crecimiento / Pre-saca</option>
+              <option value="PRIORITY">🚨 &ge; 40 días (Saca Prioritaria)</option>
             </select>
           </div>
 
@@ -630,7 +667,8 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
                 {renderSortHeader('Saldo (aves)', 'barn_balance_available', 'right')}
                 {renderSortHeader('Reservado / Saca (aves)', 'reserved_saca', 'right')}
                 {renderSortHeader('Estado', 'barn_status', 'center')}
-                {renderSortHeader('Promedio de pesos', 'average_weight_kg', 'right')}
+                {renderSortHeader('Peso promedio hoy (g)', 'average_weight_today_g', 'right')}
+                {renderSortHeader('Peso promedio ayer (g)', 'average_weight_yesterday_g', 'right')}
                 {renderSortHeader('Campaña', 'campaign', 'center')}
                 <th className="py-3 px-3 text-right whitespace-nowrap">Acciones</th>
               </tr>
@@ -638,16 +676,19 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filteredItems.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-400 italic">
+                  <td colSpan={11} className="py-12 text-center text-slate-400 italic">
                     No se encontraron galpones que coincidan con los filtros seleccionados.
                   </td>
                 </tr>
               ) : (
                 paginatedItems.map((item) => {
-                  const avgKg = getAvgWeightKg(item);
-                  const avgG = getAvgWeightG(item);
+                  const todayG = getTodayWeightG(item);
+                  const yesterdayG = getYesterdayWeightG(item);
+                  const isMixto = item.sex === 'MIXTO';
+                  const isMacho = item.sex === 'MACHO';
                   const reservedTotal = (item.reserved_count || 0) + (item.sold_pending_count || 0);
                   const statusBadge = formatBarnStatusBadge(item.barn_status);
+                  const isLowStock = item.barn_balance_available < 2000;
 
                   return (
                     <tr
@@ -658,9 +699,11 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
                         <span className="font-mono font-black text-blue-700 dark:text-blue-400">
                           {item.farm_code}
                         </span>
-                        <span className="text-[10.5px] text-slate-500 dark:text-slate-400 ml-1.5 hidden sm:inline">
-                          {item.farm_name}
-                        </span>
+                        {item.farm_name && item.farm_name !== item.farm_code && (
+                          <span className="text-[10.5px] text-slate-500 dark:text-slate-400 ml-1.5 hidden sm:inline">
+                            {item.farm_name}
+                          </span>
+                        )}
                       </td>
 
                       <td className="py-2.5 px-3 whitespace-nowrap">
@@ -675,18 +718,32 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
 
                       <td className="py-2.5 px-3 text-center whitespace-nowrap">
                         <span
-                          className={`inline-block px-2 py-0.5 rounded-md font-extrabold text-[10.5px] tracking-wide ${
-                            item.sex === 'MACHO'
-                              ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300'
-                              : 'bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300'
+                          className={`inline-block px-2.5 py-0.5 rounded-md font-extrabold text-[10.5px] tracking-wide ${
+                            isMacho
+                              ? 'bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40'
+                              : isMixto
+                              ? 'bg-purple-50 text-purple-700 dark:bg-purple-950/60 dark:text-purple-300 border border-purple-200 dark:border-purple-900/40'
+                              : 'bg-rose-50 text-rose-600 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40'
                           }`}
                         >
                           {item.sex}
                         </span>
                       </td>
 
-                      <td className="py-2.5 px-3 text-right font-mono tabular-nums font-black text-slate-950 dark:text-white text-sm whitespace-nowrap">
-                        {formatInt(item.barn_balance_available)}
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="font-black text-slate-950 dark:text-white text-sm">
+                            {formatInt(item.barn_balance_available)}
+                          </span>
+                          {isLowStock && (
+                            <span
+                              className="px-1.5 py-0.2 rounded-md text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300 border border-amber-300 dark:border-amber-700"
+                              title="Galpón con saldo bajo (< 2,000 aves)"
+                            >
+                              &lt; 2k
+                            </span>
+                          )}
+                        </div>
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
@@ -711,17 +768,42 @@ export const SaldosGalponPanel: React.FC<SaldosGalponPanelProps> = ({
                       </td>
 
                       <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
-                        {avgKg !== null ? (
-                          <div>
-                            <span className="font-bold text-blue-700 dark:text-blue-400 text-xs block">
-                              {avgKg.toFixed(2)} kg
-                            </span>
-                            {avgG !== null && (
-                              <span className="text-[10px] text-slate-400 block">
-                                {formatDec(avgG, 2)} g
+                        {todayG !== null ? (
+                          isMixto ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40">
+                                M: {formatInt(todayG + 80)} g
                               </span>
-                            )}
-                          </div>
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40">
+                                H: {formatInt(todayG - 80)} g
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-black text-slate-900 dark:text-slate-100 text-xs">
+                              {formatDec(todayG, 0)} g
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-slate-400">—</span>
+                        )}
+                      </td>
+
+                      <td className="py-2.5 px-3 text-right font-mono tabular-nums whitespace-nowrap">
+                        {yesterdayG !== null ? (
+                          isMixto ? (
+                            <div className="flex flex-col items-end gap-0.5">
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 border border-blue-200 dark:border-blue-900/40">
+                                M: {formatInt(yesterdayG + 80)} g
+                              </span>
+                              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-bold bg-rose-50 text-rose-700 dark:bg-rose-950/60 dark:text-rose-300 border border-rose-200 dark:border-rose-900/40">
+                                H: {formatInt(yesterdayG - 80)} g
+                              </span>
+                            </div>
+                          ) : (
+                            <span className="font-semibold text-slate-600 dark:text-slate-400 text-xs">
+                              {formatDec(yesterdayG, 0)} g
+                            </span>
+                          )
                         ) : (
                           <span className="text-slate-400">—</span>
                         )}

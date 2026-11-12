@@ -22,8 +22,6 @@ import {
   Bell,
   User,
   Truck,
-  PanelLeftClose,
-  PanelLeftOpen,
 } from 'lucide-react';
 
 export const DashboardLayout: React.FC = () => {
@@ -139,20 +137,26 @@ export const DashboardLayout: React.FC = () => {
           isSidebarCollapsed ? 'w-20' : 'w-72'
         }`}
       >
-        {/* Brand Header con Logo Oficial El Rocío */}
+        {/* Brand Header con Logo Oficial El Rocío: clic en el ícono desglosa o esconde el panel */}
         <div
-          className={`h-20 px-4 flex items-center ${
-            isSidebarCollapsed ? 'justify-center' : 'justify-between'
+          className={`h-16 px-4 flex items-center ${
+            isSidebarCollapsed ? 'justify-center' : 'justify-start'
           } border-b border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 transition-colors shrink-0 overflow-hidden`}
         >
-          <div className="flex items-center gap-3 min-w-0">
-            <img
-              src={logoRocio}
-              alt="Logo El Rocío"
-              className="h-11 w-auto max-w-[50px] object-contain shrink-0 cursor-pointer"
-              onClick={toggleSidebar}
-              title={isSidebarCollapsed ? 'Desglosar panel lateral' : 'Esconder panel lateral'}
-            />
+          <div
+            onClick={toggleSidebar}
+            className={`flex items-center ${
+              isSidebarCollapsed ? 'justify-center w-full' : 'gap-3 min-w-0'
+            } cursor-pointer group select-none`}
+            title={isSidebarCollapsed ? 'Desglosar panel de módulos' : 'Esconder panel de módulos'}
+          >
+            <div className="w-10 h-10 rounded-xl flex items-center justify-center group-hover:bg-slate-100 dark:group-hover:bg-slate-800 transition-colors shrink-0">
+              <img
+                src={logoRocio}
+                alt="Logo El Rocío"
+                className="h-8 w-auto max-w-[36px] object-contain shrink-0 group-hover:scale-105 transition-transform"
+              />
+            </div>
             {!isSidebarCollapsed && (
               <div className="truncate animate-fade-in">
                 <div className="font-black text-sm tracking-tight text-slate-950 dark:text-slate-50 truncate">
@@ -168,29 +172,16 @@ export const DashboardLayout: React.FC = () => {
               </div>
             )}
           </div>
-
-          {!isSidebarCollapsed && (
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              title="Esconder panel lateral"
-              className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors shrink-0"
-            >
-              <PanelLeftClose className="w-5 h-5 text-slate-600 dark:text-slate-300" />
-            </button>
-          )}
         </div>
 
         {/* Navigation Links - Scroll independiente solo dentro del menú */}
         <nav className="flex-1 px-3 py-4 space-y-4 overflow-y-auto min-h-0">
           {/* Sección 1: Módulos Autorizados */}
           <div className="space-y-1.5">
-            {!isSidebarCollapsed ? (
+            {!isSidebarCollapsed && (
               <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                 Módulos Autorizados
               </div>
-            ) : (
-              <div className="my-1 border-t border-slate-200 dark:border-slate-800" />
             )}
             {visibleOperationalItems.map((item) => {
               const Icon = item.icon;
@@ -235,12 +226,10 @@ export const DashboardLayout: React.FC = () => {
 
           {/* Sección 2: Comunicación & Mi Cuenta */}
           <div className="space-y-1.5 pt-3 border-t border-slate-200 dark:border-slate-800">
-            {!isSidebarCollapsed ? (
+            {!isSidebarCollapsed && (
               <div className="px-3 pb-1 text-[10px] font-bold uppercase tracking-wider text-slate-400 dark:text-slate-500">
                 Comunicación &amp; Perfil
               </div>
-            ) : (
-              <div className="my-1 border-t border-slate-200 dark:border-slate-800" />
             )}
             {generalNavItems.map((item) => {
               const Icon = item.icon;
@@ -475,21 +464,8 @@ export const DashboardLayout: React.FC = () => {
       {/* ========================================================================= */}
       <main className="flex-1 flex flex-col h-screen overflow-y-auto min-h-0 bg-slate-50 dark:bg-slate-950 transition-colors duration-200">
         {/* Topbar sticky con acceso directo a Cuenta, Notificaciones y Salir */}
-        <div className="h-14 border-b border-slate-200 dark:border-slate-800 px-4 sm:px-6 flex items-center justify-between bg-white dark:bg-slate-900 sticky top-0 z-20 shadow-2xs transition-colors duration-200 shrink-0">
+        <div className="h-16 border-b border-slate-200 dark:border-slate-800 px-6 flex items-center justify-between bg-white dark:bg-slate-900 sticky top-0 z-20 shadow-2xs transition-colors duration-200 shrink-0">
           <div className="flex items-center gap-2.5 text-xs text-slate-500 dark:text-slate-400">
-            {/* Botón toggle para escritorio: permite desglosar y esconder el panel lateral */}
-            <button
-              type="button"
-              onClick={toggleSidebar}
-              title={isSidebarCollapsed ? 'Desglosar panel de módulos' : 'Esconder panel de módulos'}
-              className="hidden md:inline-flex p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-colors mr-1 cursor-pointer"
-            >
-              {isSidebarCollapsed ? (
-                <PanelLeftOpen className="w-4 h-4 text-red-600 dark:text-red-400" />
-              ) : (
-                <PanelLeftClose className="w-4 h-4 text-slate-600 dark:text-slate-300" />
-              )}
-            </button>
             <Layers className="w-4 h-4 text-red-600 shrink-0" />
             <span className="font-semibold text-slate-900 dark:text-slate-100">Avícola - Grupo Rocío</span>
             <span className="text-slate-300 dark:text-slate-700">/</span>

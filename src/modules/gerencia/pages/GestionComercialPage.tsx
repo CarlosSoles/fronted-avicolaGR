@@ -1282,10 +1282,22 @@ export const GestionComercialPage: React.FC = () => {  const { user } = useAuth(
                     onChange={(e) => setFormFarmCode(e.target.value)}
                     className="w-full px-3 py-2 text-xs bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl font-bold text-slate-900 dark:text-slate-100"
                   >
-                    <option value="TRAD1">Tradiciones 1 (TRAD1)</option>
-                    <option value="TRAD2">Tradiciones 2 (TRAD2)</option>
-                    <option value="PACI6">Pacífico 6 (PACI6)</option>
-                    <option value="SISA1">Sausalito 1 (SISA1)</option>
+                    {Array.from(new Set(pecuariaItems.map((p) => p.farm_code))).map((code) => {
+                      const f = pecuariaItems.find((p) => p.farm_code === code);
+                      return (
+                        <option key={code} value={code}>
+                          {f?.farm_name || code} ({code})
+                        </option>
+                      );
+                    })}
+                    {pecuariaItems.length === 0 && (
+                      <>
+                        <option value="TRAD1">Tradiciones 1 (TRAD1)</option>
+                        <option value="TRAD2">Tradiciones 2 (TRAD2)</option>
+                        <option value="PACI6">Pacífico 6 (PACI6)</option>
+                        <option value="SISA1">Sausalito 1 (SISA1)</option>
+                      </>
+                    )}
                   </select>
                 </div>
 
